@@ -1,0 +1,401 @@
+'use client'
+
+import { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Tabs } from '@/components/ui/tabs'
+import { api } from '@/lib/utils'
+
+interface PlatformAuth {
+  id: string
+  platform: string
+  accountId: string | null
+  appId: string | null
+  apiKey: string | null
+  isActive: boolean
+  extra: string | null
+  hasRefreshToken?: boolean
+  hasAccessToken?: boolean
+}
+
+interface PlatformConfig {
+  id: string
+  name: string
+  icon: string
+  description: string
+  oauthSupported?: boolean
+  fields: Array<{ key: string; label: string; placeholder: string; sensitive?: boolean }>
+}
+
+const PLATFORMS: PlatformConfig[] = [
+  {
+    id: 'google', name: 'Google Ads', icon: '🔵',
+    description: 'Connect your Google Ads MCC or individual account',
+    oauthSupported: true,
+    fields: [
+      { key: 'accountId', label: 'MCC / Customer ID', placeholder: '830-379-6268' },
+      { key: 'apiKey', label: 'Developer Token', placeholder: 'Google Ads developer token', sensitive: true },
+    ],
+  },
+  {
+    id: 'meta', name: 'Meta (Facebook)', icon: '🟣',
+    description: 'Connect Facebook/Instagram ad accounts',
+    fields: [
+      { key: 'accountId', label: 'Ad Account ID', placeholder: 'act_xxxxxxxxx' },
+      { key: 'accessToken', label: 'Access Token', placeholder: 'Facebook access token', sensitive: true },
+      { key: 'appId', label: 'App ID (optional)', placeholder: 'Facebook App ID' },
+      { key: 'appSecret', label: 'App Secret (optional)', placeholder: 'Facebook App Secret', sensitive: true },
+    ],
+  },
+  {
+    id: 'tiktok', name: 'TikTok Ads', icon: '⬛',
+    description: 'Connect TikTok Business ad accounts',
+    fields: [
+      { key: 'accountId', label: 'Advertiser ID', placeholder: 'TikTok Advertiser ID' },
+      { key: 'accessToken', label: 'Access Token', placeholder: 'TikTok access token', sensitive: true },
+      { key: 'appId', label: 'App ID (optional)', placeholder: 'TikTok App ID' },
+      { key: 'appSecret', label: 'App Secret (optional)', placeholder: 'TikTok App Secret', sensitive: true },
+    ],
+  },
+  {
+    id: 'appsflyer', name: 'AppsFlyer', icon: '📱',
+    description: 'Connect AppsFlyer for attribution data',
+    fields: [
+      { key: 'apiKey', label: 'API Token', placeholder: 'AppsFlyer API token', sensitive: true },
+      { key: 'appId', label: 'App ID', placeholder: 'com.example.app' },
+    ],
+  },
+  {
+    id: 'adjust', name: 'Adjust', icon: '📐',
+    description: 'Connect Adjust for attribution data',
+    fields: [
+      { key: 'apiKey', label: 'API Token', placeholder: 'Adjust API token', sensitive: true },
+      { key: 'appId', label: 'App Token', placeholder: 'Adjust app token' },
+    ],
+  },
+  {
+    id: 'seedream', name: 'Seedream (Image AI)', icon: '🎨',
+    description: 'AI image generation for ad creatives',
+    fields: [
+      { key: 'apiKey', label: 'API Key', placeholder: 'Seedream API key', sensitive: true },
+    ],
+  },
+  {
+    id: 'seedance', name: 'Seedance (Video AI)', icon: '🎬',
+    description: 'AI video generation for ad creatives',
+    fields: [
+      { key: 'apiKey', label: 'API Key', placeholder: 'Seedance API key', sensitive: true },
+    ],
+  },
+]
+
+export default function SettingsPage() {
+  const [auths, setAuths] = useState<PlatformAuth[]>([])
+  const [formData, setFormData] = useState<Record<string, Record<string, string>>>({})
+  const [saving, setSaving] = useState<string | null>(null)
+  const [profile, setProfile] = useState({ name: '', dailyReportEmail: '' })
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [googleAccounts, setGoogleAccounts] = useState<Array<{ id: string; name: string }>>([])
+  const [loadingAccounts, setLoadingAccounts] = useState(false)
+  const [testError, setTestError] = useState<string | null>(null)
+
+  const loadAuths = useCallback(async () => {
+    const res = await fetch(api('/api/platforms'))
+    const data = await res.json()
+    if (!Array.isArray(data)) return
+
+    setAuths(data)
+
+    // Pre-populate form fields with saved values
+    const newFormData: Record<string, Record<string, string>> = {}
+    for (const auth of data) {
+      newFormData[auth.platform] = {}
+      if (auth.accountId) newFormData[auth.platform].accountId = auth.accountId
+      if (auth.appId) newFormData[auth.platform].appId = auth.appId
+      if (auth.apiKey) newFormData[auth.platform].apiKey = auth.apiKey
+    }
+    setFormData(prev => {
+      // Merge: keep any user-edited values, fill in saved values for empty fields
+      const merged: Record<string, Record<string, string>> = { ...newFormData }
+      for (const [platform, fields] of Object.entries(prev)) {
+        if (!merged[platform]) merged[platform] = {}
+        for (const [key, val] of Object.entries(fields)) {
+          if (val) merged[platform][key] = val  // user-edited values take precedence
+        }
+      }
+      return merged
+    })
+  }, [])
+
+  useEffect(() => {
+    loadAuths()
+    fetch(api('/api/auth/me')).then(r => r.json()).then(data => {
+      if (data.name !== undefined) setProfile({ name: data.name || '', dailyReportEmail: data.dailyReportEmail || '' })
+    })
+
+    // Check for OAuth callback results
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('success') === 'google_connected') {
+      window.history.replaceState({}, '', window.location.pathname)
+      loadAuths()
+    }
+    if (params.get('error')) {
+      setTestError(`Google OAuth error: ${params.get('error')}`)
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [loadAuths])
+
+  function startGoogleOAuth() {
+    window.location.href = api('/api/auth/google')
+  }
+
+  async function savePlatform(platformId: string) {
+    setSaving(platformId)
+    setTestError(null)
+    try {
+      const data = formData[platformId] || {}
+      const res = await fetch(api('/api/platforms'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: platformId, ...data }),
+      })
+      const result = await res.json()
+      if (result.error) {
+        setTestError(result.error)
+      } else {
+        // Reload to get updated saved values
+        await loadAuths()
+      }
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  async function removePlatform(platformId: string) {
+    if (!confirm(`Remove ${platformId} authorization?`)) return
+    await fetch(api('/api/platforms'), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: platformId }),
+    })
+    setFormData(prev => ({ ...prev, [platformId]: {} }))
+    setGoogleAccounts([])
+    setTestError(null)
+    await loadAuths()
+  }
+
+  async function testGoogleConnection() {
+    setLoadingAccounts(true)
+    setTestError(null)
+    try {
+      const res = await fetch(api('/api/google-ads/accounts'))
+      const data = await res.json()
+      if (data.error) {
+        setTestError(data.error)
+        if (data.hint) setTestError(prev => `${prev}\n${data.hint}`)
+      } else {
+        setGoogleAccounts(data.accounts || [])
+        if (data.accounts?.length === 0) {
+          setTestError('Connected but no accessible accounts found. Check MCC ID and Developer Token.')
+        }
+      }
+    } catch {
+      setTestError('Failed to connect to Google Ads API')
+    } finally {
+      setLoadingAccounts(false)
+    }
+  }
+
+  async function saveProfile(e: React.FormEvent) {
+    e.preventDefault()
+    setSavingProfile(true)
+    try {
+      await fetch(api('/api/settings'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile),
+      })
+    } finally {
+      setSavingProfile(false)
+    }
+  }
+
+  function getFieldValue(platformId: string, fieldKey: string) {
+    return formData[platformId]?.[fieldKey] || ''
+  }
+
+  function setFieldValue(platformId: string, fieldKey: string, value: string) {
+    setFormData(prev => ({
+      ...prev,
+      [platformId]: { ...prev[platformId], [fieldKey]: value },
+    }))
+  }
+
+  const googleAuth = auths.find(a => a.platform === 'google')
+  const hasGoogleOAuth = googleAuth?.hasRefreshToken || false
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Settings</h1>
+        <p className="text-gray-500 text-sm mt-1">Configure platform authorizations and account settings</p>
+      </div>
+
+      <Tabs tabs={[
+        {
+          id: 'platforms',
+          label: 'Platform Auth',
+          content: (
+            <div className="space-y-4">
+              {PLATFORMS.map((p) => {
+                const auth = auths.find(a => a.platform === p.id)
+                return (
+                  <Card key={p.id}>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">{p.icon}</span>
+                          <div>
+                            <CardTitle className="text-base">{p.name}</CardTitle>
+                            <p className="text-xs text-gray-500 mt-0.5">{p.description}</p>
+                          </div>
+                        </div>
+                        {auth?.isActive ? (
+                          <Badge variant="success">Connected</Badge>
+                        ) : (
+                          <Badge variant="default">Not Connected</Badge>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      {/* Google Ads: OAuth flow */}
+                      {p.id === 'google' && (
+                        <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                          <p className="text-sm font-medium text-blue-800 mb-1">Step 1: Authorize with Google</p>
+                          <p className="text-xs text-blue-600 mb-3">
+                            Authorize Adex to access Google Ads data. Use the account with MCC access.
+                          </p>
+                          <div className="flex items-center gap-3">
+                            <Button size="sm" variant="outline" onClick={startGoogleOAuth}>
+                              {hasGoogleOAuth ? '🔄 Re-authorize' : '🔗 Authorize with Google'}
+                            </Button>
+                            {hasGoogleOAuth && (
+                              <span className="text-xs text-green-600 font-medium">✓ OAuth token obtained</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {p.id === 'google' && (
+                        <div className="mb-3 p-3 bg-gray-50 rounded-lg border">
+                          <p className="text-sm font-medium mb-0.5">Step 2: Enter MCC Info & Save</p>
+                          <p className="text-xs text-gray-500">
+                            Fill in both fields below and click Save. The MCC ID allows managing all sub-accounts.
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {p.fields.map((f) => (
+                          <div key={f.key}>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              {f.label}
+                              {getFieldValue(p.id, f.key) && auth?.isActive && (
+                                <span className="text-green-600 text-xs ml-2">✓ saved</span>
+                              )}
+                            </label>
+                            <Input
+                              type={f.sensitive ? 'password' : 'text'}
+                              placeholder={f.placeholder}
+                              value={getFieldValue(p.id, f.key)}
+                              onChange={(e) => setFieldValue(p.id, f.key, e.target.value)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Error display */}
+                      {p.id === 'google' && testError && (
+                        <div className="mt-3 p-3 bg-red-50 rounded-lg border border-red-200">
+                          <p className="text-sm text-red-700 whitespace-pre-line">{testError}</p>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2 mt-4">
+                        <Button size="sm" onClick={() => savePlatform(p.id)} disabled={saving === p.id}>
+                          {saving === p.id ? 'Saving...' : 'Save'}
+                        </Button>
+                        {p.id === 'google' && hasGoogleOAuth && (
+                          <Button size="sm" variant="outline" onClick={testGoogleConnection} disabled={loadingAccounts}>
+                            {loadingAccounts ? 'Testing...' : 'Test & List Accounts'}
+                          </Button>
+                        )}
+                        {auth && (
+                          <Button size="sm" variant="danger" onClick={() => removePlatform(p.id)}>
+                            Disconnect
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* Google accounts list */}
+                      {p.id === 'google' && googleAccounts.length > 0 && (
+                        <div className="mt-4 p-3 bg-green-50 rounded-lg border border-green-200">
+                          <p className="text-sm font-medium text-green-800 mb-2">
+                            ✓ Accessible Accounts ({googleAccounts.length})
+                          </p>
+                          <div className="space-y-1">
+                            {googleAccounts.map((acc) => (
+                              <div key={acc.id} className="flex items-center gap-2 text-sm">
+                                <span className="text-green-600">✓</span>
+                                <span className="font-mono text-xs">{acc.id}</span>
+                                <span className="text-gray-600">{acc.name}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          ),
+        },
+        {
+          id: 'profile',
+          label: 'Profile & Notifications',
+          content: (
+            <Card>
+              <CardHeader>
+                <CardTitle>Profile Settings</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={saveProfile} className="space-y-4 max-w-md">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Display Name</label>
+                    <Input value={profile.name} onChange={e => setProfile(p => ({ ...p, name: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Daily Report Email</label>
+                    <Input
+                      type="email"
+                      value={profile.dailyReportEmail}
+                      onChange={e => setProfile(p => ({ ...p, dailyReportEmail: e.target.value }))}
+                      placeholder="Receive daily performance reports at this email"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Leave empty to disable daily reports.</p>
+                  </div>
+                  <Button type="submit" disabled={savingProfile}>
+                    {savingProfile ? 'Saving...' : 'Save Settings'}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          ),
+        },
+      ]} />
+    </div>
+  )
+}

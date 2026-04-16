@@ -1,36 +1,102 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Adex
 
-## Getting Started
+AI-powered ad placement and creative automation platform. Adex helps marketers connect ad accounts (Google Ads, with more platforms planned), generate creative assets with AI (image, video, audio via Seedance2), sync performance data, and orchestrate campaigns from a single dashboard.
 
-First, run the development server:
+Built on Next.js 16 with the App Router, deployed on Google Cloud Run with Cloud SQL Postgres and Google Cloud Storage for persistent state.
+
+## Features
+
+- **Multi-platform ad account auth** — OAuth2 connect for Google Ads (MCC supported), with PlatformAuth abstraction ready for Meta / TikTok / etc.
+- **Performance dashboard** — Sync Data pulls from external ad APIs into Postgres; the dashboard reads from the DB so transient API failures never crash the UI.
+- **AI creative generation** — Seedance2 (doubao-seedance-2-0) integration for text2video and image2video, with per-task progress tracking and elapsed-time display.
+- **Asset library** — Upload images / video / audio directly to Google Cloud Storage; assets are referenced via signed public URLs.
+- **Google Drive sync** — Optional folder ingestion into the asset library.
+- **Cookie-based auth** — Lightweight session model; users own their PlatformAuth records.
+
+## Tech Stack
+
+- **Frontend / API**: Next.js 16.2 (App Router, Turbopack, standalone output), React 19, Tailwind
+- **Database**: PostgreSQL 16 (Cloud SQL) via Prisma 7 with `@prisma/adapter-pg`
+- **Storage**: Google Cloud Storage (REST API + ADC token from metadata server)
+- **Hosting**: Google Cloud Run (containerized, basePath `/adex`)
+- **AI**: Seedance2 (doubao-seedance-2-0) for video; pluggable provider layer
+
+## Quick Start (local)
 
 ```bash
+# 1. install
+npm install
+
+# 2. configure
+cp .env.example .env
+# edit .env — at minimum set DATABASE_URL pointing at any Postgres instance
+
+# 3. migrate
+npx prisma migrate deploy
+
+# 4. run
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000/adex>.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+For local file uploads to GCS, either run with Application Default Credentials (`gcloud auth application-default login`) or set `GOOGLE_ACCESS_TOKEN` in `.env`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Deployment to Google Cloud Run
 
-## Learn More
+The repo includes a production-ready `Dockerfile` and `start.sh` (runs `prisma migrate deploy` then boots the standalone server).
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+# Build & push
+gcloud builds submit --tag gcr.io/YOUR_PROJECT/adex
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+# Deploy (set env vars via --set-env-vars or Secret Manager)
+gcloud run deploy adex \
+  --image gcr.io/YOUR_PROJECT/adex \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --add-cloudsql-instances YOUR_PROJECT:REGION:INSTANCE \
+  --set-env-vars "DATABASE_URL=postgresql://...,GCS_BUCKET=...,..."
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Notes:
+- The Cloud Run service account needs `roles/storage.objectAdmin` on the GCS bucket and `roles/cloudsql.client` for Cloud SQL.
+- Prisma Migrate does not parse the Cloud SQL Unix-socket DSN format — use the public IP DSN at runtime, with the instance allow-listed for the Cloud Run egress range (or use a connector).
 
-## Deploy on Vercel
+## Project Structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+src/
+  app/
+    (dashboard)/         # authed UI routes (basePath /adex)
+    api/
+      assets/            # asset CRUD + GCS upload
+      auth/google/       # OAuth2 connect for Google Ads
+      reports/sync/      # pull metrics into DB
+      seedance2/         # AI video generation
+  lib/
+    prisma.ts            # PrismaClient with pg.Pool adapter, lazy init
+    storage.ts           # GCS upload/delete via REST + ADC
+    auth.ts              # cookie session helpers
+    platforms/           # external API clients (google-ads, seedance2, ...)
+prisma/
+  schema.prisma          # PostgreSQL schema
+  migrations/
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Architecture Notes
+
+- **Persistence first.** No SQLite, no local disk for user data. Everything goes to Cloud SQL or GCS so a Cloud Run cold start never loses anything.
+- **Crash-safe dashboard.** API responses are validated (`res.ok` + `Array.isArray`) before being rendered. A failed external sync surfaces as a banner, not a white screen.
+- **Lazy Prisma client.** `src/lib/prisma.ts` returns a `Proxy` when `DATABASE_URL` is unset, so Next.js build-time page-data collection doesn't need a live DB.
+- **basePath `/adex`.** All routes are mounted under `/adex` to coexist with sibling apps on the same domain.
+
+## Security
+
+- Don't commit `.env`. The repo's `.env.example` documents every variable.
+- OAuth tokens are stored in the `PlatformAuth` table (per user, per platform). Refresh tokens are kept; the callback flow forces `prompt=consent` so a refresh token is always issued.
+- Hardcoded keys / URLs have been scrubbed — all secrets come from environment.
+
+## License
+
+[MIT](./LICENSE) © 2026 Oratis

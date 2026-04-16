@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  password      String
+  dailyReportEmail String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  platformAuths PlatformAuth[]
+  campaigns     Campaign[]
+  creatives     Creative[]
+  reports       Report[]
+  budgets       Budget[]
+}
+
+model PlatformAuth {
+  id           String   @id @default(cuid())
+  userId       String
+  platform     String   // google, meta, tiktok, appsflyer, adjust, seedream, seedance
+  accountId    String?
+  accessToken  String?
+  refreshToken String?
+  appId        String?
+  appSecret    String?
+  apiKey       String?
+  extra        String?  // JSON string for additional config
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, platform])
+}
+
+model Campaign {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String
+  platform        String   // google, meta, tiktok
+  status          String   @default("draft") // draft, active, paused, completed
+  objective       String?  // awareness, consideration, conversion
+  targetCountries String?  // JSON array of country codes
+  targetAudience  String?  // JSON object with demographics
+  targetInterests String?  // JSON array of interests
+  ageMin          Int?
+  ageMax          Int?
+  gender          String?  // all, male, female
+  platformCampaignId String? // ID from the ad platform
+  startDate       DateTime?
+  endDate         DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  adGroups  AdGroup[]
+  budgets   Budget[]
+  reports   Report[]
+}
+
+model AdGroup {
+  id              String   @id @default(cuid())
+  campaignId      String
+  name            String
+  status          String   @default("draft")
+  platformAdGroupId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  campaign  Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  ads       Ad[]
+}
+
+model Ad {
+  id            String   @id @default(cuid())
+  adGroupId     String
+  creativeId    String?
+  name          String
+  headline      String?
+  description   String?
+  callToAction  String?
+  destinationUrl String?
+  platformAdId  String?
+  status        String   @default("draft")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  adGroup   AdGroup   @relation(fields: [adGroupId], references: [id], onDelete: Cascade)
+  creative  Creative? @relation(fields: [creativeId], references: [id])
+}
+
+model Creative {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  type        String   // image, video
+  source      String   // upload, seedream, seedance
+  filePath    String?
+  fileUrl     String?
+  prompt      String?  // AI generation prompt
+  status      String   @default("ready") // generating, ready, failed
+  width       Int?
+  height      Int?
+  duration    Int?     // for video, in seconds
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ads  Ad[]
+}
+
+model Budget {
+  id          String   @id @default(cuid())
+  userId      String
+  campaignId  String?
+  type        String   // daily, lifetime
+  amount      Float
+  currency    String   @default("USD")
+  spent       Float    @default(0)
+  startDate   DateTime?
+  endDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+}
+
+model Report {
+  id          String   @id @default(cuid())
+  userId      String
+  campaignId  String?
+  platform    String   // google, meta, tiktok, appsflyer, adjust
+  date        DateTime
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  conversions Int      @default(0)
+  spend       Float    @default(0)
+  revenue     Float    @default(0)
+  installs    Int      @default(0)
+  ctr         Float    @default(0)
+  cpc         Float    @default(0)
+  cpa         Float    @default(0)
+  roas        Float    @default(0)
+  rawData     String?  // JSON string of full API response
+  createdAt   DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+}
+
+model DailyDigest {
+  id        String   @id @default(cuid())
+  userId    String
+  date      DateTime
+  content   String   // HTML email content
+  advice    String?  // AI-generated advice
+  sentAt    DateTime?
+  createdAt DateTime @default(now())
+}
+
+model Asset {
+  id            String   @id @default(cuid())
+  uploadedBy    String   // userId who contributed
+  uploaderName  String?  // display name
+  name          String
+  type          String   // image, video, folder
+  source        String   // upload, seedance2, seedream, gdrive
+  fileUrl       String?  // public URL or local path
+  thumbnailUrl  String?
+  prompt        String?  // AI generation prompt
+  referenceData String?  // JSON: reference images/videos/audio URLs
+  taskId        String?  // Seedance2 task ID
+  status        String   @default("ready") // pending, generating, ready, failed
+  ratio         String?  // 16:9, 9:16, 1:1, etc.
+  duration      Int?     // video duration in seconds
+  model         String?  // AI model used
+  tags          String?  // JSON array of tags
+  fileSize      Int?     // bytes
+  errorMessage  String?
+  parentId      String?  // parent folder asset ID
+  isFolder      Boolean  @default(false)
+  driveFileId   String?  // Google Drive file ID for dedup
+  folderPath    String?  // breadcrumb path e.g. "有为互动/素材"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  parent   Asset?  @relation("AssetTree", fields: [parentId], references: [id])
+  children Asset[] @relation("AssetTree")
+}
