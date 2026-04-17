@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
+import { useState } from 'react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
@@ -15,8 +16,23 @@ const navItems = [
   { href: '/settings', label: 'Settings', icon: '⚙️' },
 ]
 
-export function Sidebar() {
+export function Sidebar({ userName }: { userName?: string }) {
   const pathname = usePathname()
+  const router = useRouter()
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  async function handleLogout() {
+    if (loggingOut) return
+    setLoggingOut(true)
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } catch {
+      // ignore — we'll still redirect
+    } finally {
+      router.push('/login')
+      router.refresh()
+    }
+  }
 
   return (
     <aside className="w-64 bg-gray-900 text-white min-h-screen flex flex-col">
@@ -43,9 +59,18 @@ export function Sidebar() {
           </Link>
         ))}
       </nav>
-      <div className="px-4 py-4 border-t border-gray-800">
-        <button className="w-full text-left text-sm text-gray-400 hover:text-white px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors">
-          Logout
+      <div className="px-4 py-4 border-t border-gray-800 space-y-2">
+        {userName && (
+          <div className="px-3 text-xs text-gray-500 truncate" title={userName}>
+            Signed in as <span className="text-gray-300">{userName}</span>
+          </div>
+        )}
+        <button
+          onClick={handleLogout}
+          disabled={loggingOut}
+          className="w-full text-left text-sm text-gray-400 hover:text-white px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50"
+        >
+          {loggingOut ? 'Signing out…' : 'Logout'}
         </button>
       </div>
     </aside>

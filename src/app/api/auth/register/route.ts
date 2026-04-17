@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { hashPassword } from '@/lib/auth'
+import {
+  hashPassword,
+  signSessionToken,
+  SESSION_COOKIE,
+  SESSION_MAX_AGE,
+} from '@/lib/auth'
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,6 +15,15 @@ export async function POST(req: NextRequest) {
 
     if (!email || !password) {
       return NextResponse.json({ error: 'Email and password required' }, { status: 400 })
+    }
+    if (!EMAIL_RE.test(email)) {
+      return NextResponse.json({ error: 'Invalid email format' }, { status: 400 })
+    }
+    if (typeof password !== 'string' || password.length < 8) {
+      return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })
+    }
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return NextResponse.json({ error: 'Name is required' }, { status: 400 })
     }
 
     const existing = await prisma.user.findUnique({ where: { email } })
@@ -19,20 +35,23 @@ export async function POST(req: NextRequest) {
       data: {
         email,
         password: hashPassword(password),
-        name,
+        name: name.trim(),
       },
     })
 
+    const token = signSessionToken(user.id, SESSION_MAX_AGE)
     const response = NextResponse.json({ id: user.id, email: user.email, name: user.name })
-    response.cookies.set('auth_token', user.id, {
+    response.cookies.set(SESSION_COOKIE, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 30, // 30 days
+      path: '/',
+      maxAge: SESSION_MAX_AGE,
     })
 
     return response
   } catch (error) {
-    return NextResponse.json({ error: 'Registration failed' }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'Registration failed'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

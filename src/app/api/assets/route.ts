@@ -3,9 +3,14 @@ import { prisma } from '@/lib/prisma'
 import { getCurrentUser } from '@/lib/auth'
 import { uploadToGCS } from '@/lib/storage'
 
-// GET: List all shared assets (all users can see all assets)
+// GET: List all shared assets (requires authentication)
 export async function GET(req: NextRequest) {
   try {
+    const user = await getCurrentUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const searchParams = req.nextUrl.searchParams
     const type = searchParams.get('type') // image, video, folder
     const source = searchParams.get('source') // upload, seedance2, seedream, gdrive
@@ -52,6 +57,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     const contentType = req.headers.get('content-type') || ''
 
     if (contentType.includes('multipart/form-data')) {
@@ -71,8 +79,8 @@ export async function POST(req: NextRequest) {
 
       const asset = await prisma.asset.create({
         data: {
-          uploadedBy: user?.id || 'anonymous',
-          uploaderName: user?.name || user?.email || 'Anonymous',
+          uploadedBy: user.id,
+          uploaderName: user.name || user.email,
           name: (formData.get('name') as string) || file.name,
           type: isVideo ? 'video' : 'image',
           source: 'upload',
