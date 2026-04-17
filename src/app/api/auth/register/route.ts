@@ -6,10 +6,15 @@ import {
   SESSION_COOKIE,
   SESSION_MAX_AGE,
 } from '@/lib/auth'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export async function POST(req: NextRequest) {
+  // 5 signups per hour per IP — stops account farming
+  const rl = checkRateLimit(req, { key: 'register', limit: 5, windowMs: 60 * 60_000 })
+  if (!rl.ok) return rateLimitResponse(rl)
+
   try {
     const { email, password, name } = await req.json()
 

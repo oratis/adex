@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import { completeJSON, isLLMConfigured } from '@/lib/llm'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 type CopyVariant = {
   headline: string
@@ -12,11 +13,21 @@ type CopyVariant = {
 // Body: { productDescription, audience?, tone?, platform?, count? }
 // Returns: { variants: CopyVariant[] }
 export async function POST(req: NextRequest) {
+  let user
   try {
-    await requireAuth()
+    user = await requireAuth()
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  // 30 LLM copy generations per hour per user — caps Anthropic spend
+  const rl = checkRateLimit(req, {
+    key: 'generate-copy',
+    limit: 30,
+    windowMs: 60 * 60_000,
+    identity: user.id,
+  })
+  if (!rl.ok) return rateLimitResponse(rl)
 
   if (!isLLMConfigured()) {
     return NextResponse.json(

@@ -1,17 +1,62 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-}
-
 body {
-  color: var(--color-foreground);
-  background: var(--color-background);
+  color: var(--foreground);
+  background: var(--background);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
+
+/* --- Dark theme ---------------------------------------------------------
+   Pragmatic override: instead of rewriting every Tailwind class with dark:
+   variants, we invert the most common color utilities when `.dark` is
+   present on <html>. This gives a consistent baseline across every page
+   without touching 40+ component files.
+*/
+.dark {
+  color-scheme: dark;
+}
+.dark body {
+  background: #0b1220;
+  color: #e5e7eb;
+}
+.dark .bg-white               { background-color: #111827 !important; }
+.dark .bg-gray-50             { background-color: #0b1220 !important; }
+.dark .bg-gray-100            { background-color: #1f2937 !important; }
+.dark .bg-blue-50             { background-color: #1e3a8a33 !important; }
+.dark .bg-red-50              { background-color: #7f1d1d33 !important; }
+.dark .bg-green-50            { background-color: #14532d33 !important; }
+.dark .bg-amber-50            { background-color: #78350f33 !important; }
+.dark .bg-yellow-50           { background-color: #78350f33 !important; }
+.dark .text-gray-900          { color: #f3f4f6 !important; }
+.dark .text-gray-800          { color: #e5e7eb !important; }
+.dark .text-gray-700          { color: #d1d5db !important; }
+.dark .text-gray-600          { color: #9ca3af !important; }
+.dark .text-gray-500          { color: #9ca3af !important; }
+.dark .text-gray-400          { color: #6b7280 !important; }
+.dark .border,
+.dark .border-t,
+.dark .border-b,
+.dark .border-l,
+.dark .border-r               { border-color: #1f2937 !important; }
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300        { border-color: #374151 !important; }
+.dark .divide-y > * + *       { border-color: #1f2937 !important; }
+.dark .shadow,
+.dark .shadow-sm,
+.dark .shadow-md,
+.dark .shadow-lg              { box-shadow: 0 1px 3px rgba(0,0,0,.6) !important; }
+.dark input, .dark select, .dark textarea {
+  background-color: #111827;
+  color: #e5e7eb;
+  border-color: #374151;
+}
+.dark input::placeholder,
+.dark textarea::placeholder   { color: #6b7280; }

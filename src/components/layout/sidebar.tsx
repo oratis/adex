@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
+import { useTheme } from '@/components/theme-provider'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: '📊' },
@@ -20,6 +21,7 @@ export function Sidebar({ userName }: { userName?: string }) {
   const pathname = usePathname()
   const router = useRouter()
   const [loggingOut, setLoggingOut] = useState(false)
+  const { resolvedTheme, toggle } = useTheme()
 
   async function handleLogout() {
     if (loggingOut) return
@@ -65,6 +67,14 @@ export function Sidebar({ userName }: { userName?: string }) {
             Signed in as <span className="text-gray-300">{userName}</span>
           </div>
         )}
+        <button
+          onClick={toggle}
+          className="w-full text-left text-sm text-gray-400 hover:text-white px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center gap-2"
+          aria-label="Toggle theme"
+        >
+          <span>{resolvedTheme === 'dark' ? '☀️' : '🌙'}</span>
+          <span>{resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+        </button>
         <button
           onClick={handleLogout}
           disabled={loggingOut}

@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
+import Link from 'next/link'
 import { api } from '@/lib/utils'
 
 const COUNTRIES = [
@@ -254,10 +255,15 @@ export default function CampaignsPage() {
             <Card key={c.id}>
               <CardContent className="py-4">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div>
+                  <div className="flex items-center gap-4 min-w-0 flex-1">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <h3 className="font-semibold">{c.name}</h3>
+                        <Link
+                          href={`/campaigns/${c.id}`}
+                          className="font-semibold hover:text-blue-600 hover:underline truncate"
+                        >
+                          {c.name}
+                        </Link>
                         <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">

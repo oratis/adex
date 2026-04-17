@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
 import { completeJSON, isLLMConfigured } from '@/lib/llm'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 type Advice = {
   title: string
@@ -91,13 +92,22 @@ function ruleBasedAdvice(params: {
   return out
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(req: NextRequest): Promise<NextResponse> {
   let user
   try {
     user = await requireAuth()
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  // 60 calls / hour / user — generous but keeps LLM spend bounded
+  const rl = checkRateLimit(req, {
+    key: 'advisor',
+    limit: 60,
+    windowMs: 60 * 60_000,
+    identity: user.id,
+  })
+  if (!rl.ok) return rateLimitResponse(rl)
 
   try {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)

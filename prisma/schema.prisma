@@ -169,6 +169,17 @@ model DailyDigest {
   createdAt DateTime @default(now())
 }
 
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique       // SHA-256 of the raw token
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
 model Asset {
   id            String   @id @default(cuid())
   uploadedBy    String   // userId who contributed
