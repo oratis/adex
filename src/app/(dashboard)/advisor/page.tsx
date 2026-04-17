@@ -4,211 +4,182 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { useToast } from '@/components/ui/toast'
 import { formatCurrency, formatNumber, api } from '@/lib/utils'
 
 interface Report {
-  id: string
   platform: string
-  date: string
-  impressions: number
-  clicks: number
-  conversions: number
   spend: number
   revenue: number
-  ctr: number
-  cpc: number
-  cpa: number
-  roas: number
-}
-
-interface Campaign {
-  id: string
-  name: string
-  platform: string
-  status: string
-  targetCountries: string | null
+  conversions: number
 }
 
 interface Advice {
-  type: 'optimization' | 'warning' | 'opportunity'
   title: string
   description: string
-  platform?: string
+  severity: 'info' | 'warning' | 'opportunity' | 'alert'
+  recommendedAction?: string
+}
+
+interface AdvisorResponse {
+  advice: Advice[]
+  source: 'llm' | 'rules'
+  model?: string
 }
 
 export default function AdvisorPage() {
+  const { toast } = useToast()
   const [reports, setReports] = useState<Report[]>([])
-  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [campaignCount, setCampaignCount] = useState(0)
   const [advice, setAdvice] = useState<Advice[]>([])
+  const [source, setSource] = useState<'llm' | 'rules' | null>(null)
+  const [model, setModel] = useState<string | undefined>()
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
-    Promise.all([
-      fetch(api('/api/reports')).then(r => r.json()),
-      fetch(api('/api/campaigns')).then(r => r.json()),
-    ]).then(([reportData, campaignData]) => {
-      const r = Array.isArray(reportData) ? reportData : []
-      const c = Array.isArray(campaignData) ? campaignData : []
-      setReports(r)
-      setCampaigns(c)
-      setAdvice(generateAdvice(r, c))
-      setLoading(false)
-    })
+    loadAll()
   }, [])
 
-  function generateAdvice(reports: Report[], campaigns: Campaign[]): Advice[] {
-    const tips: Advice[] = []
+  async function loadAll() {
+    setLoading(true)
+    try {
+      const [advisorRes, reportsRes, campaignsRes] = await Promise.all([
+        fetch(api('/api/advisor')),
+        fetch(api('/api/reports')),
+        fetch(api('/api/campaigns')),
+      ])
+      const advisor: AdvisorResponse = await advisorRes.json()
+      const reportsData = await reportsRes.json()
+      const campaignsData = await campaignsRes.json()
 
-    // Analyze by platform
-    const platforms = ['google', 'meta', 'tiktok']
-    for (const platform of platforms) {
-      const platformReports = reports.filter(r => r.platform === platform)
-      if (platformReports.length === 0) continue
-
-      const totalSpend = platformReports.reduce((s, r) => s + r.spend, 0)
-      const totalRevenue = platformReports.reduce((s, r) => s + r.revenue, 0)
-      const avgCTR = platformReports.reduce((s, r) => s + r.ctr, 0) / platformReports.length
-      const avgCPA = platformReports.reduce((s, r) => s + r.cpa, 0) / platformReports.length
-      const roas = totalSpend > 0 ? totalRevenue / totalSpend : 0
-
-      if (roas < 1 && totalSpend > 0) {
-        tips.push({
-          type: 'warning',
-          title: `Low ROAS on ${platform}`,
-          description: `Your ${platform} campaigns have a ROAS of ${roas.toFixed(2)}x. Consider pausing underperforming ad groups and reallocating budget to higher-performing ones.`,
-          platform,
-        })
+      if (Array.isArray(advisor.advice)) {
+        setAdvice(advisor.advice)
+        setSource(advisor.source)
+        setModel(advisor.model)
       }
-
-      if (avgCTR < 0.01) {
-        tips.push({
-          type: 'optimization',
-          title: `Low CTR on ${platform}`,
-          description: `Average CTR is ${(avgCTR * 100).toFixed(2)}%. Try testing new ad creatives with stronger calls-to-action, or refine your audience targeting.`,
-          platform,
-        })
-      }
-
-      if (avgCPA > 50) {
-        tips.push({
-          type: 'optimization',
-          title: `High CPA on ${platform}`,
-          description: `Average CPA is ${formatCurrency(avgCPA)}. Consider narrowing your audience to more qualified users, or testing lower-funnel conversion objectives.`,
-          platform,
-        })
-      }
-
-      if (roas > 3) {
-        tips.push({
-          type: 'opportunity',
-          title: `Scale ${platform} campaigns`,
-          description: `ROAS of ${roas.toFixed(2)}x is excellent! Consider increasing budgets by 20-30% to capture more conversions while maintaining efficiency.`,
-          platform,
-        })
-      }
-    }
-
-    // Check for campaigns without activity
-    const activeCampaigns = campaigns.filter(c => c.status === 'active')
-    const draftCampaigns = campaigns.filter(c => c.status === 'draft')
-
-    if (draftCampaigns.length > 0) {
-      tips.push({
-        type: 'opportunity',
-        title: `${draftCampaigns.length} draft campaign(s) ready to launch`,
-        description: `You have ${draftCampaigns.length} campaigns in draft status. Review and launch them to start driving results.`,
+      setReports(Array.isArray(reportsData) ? reportsData : [])
+      setCampaignCount(Array.isArray(campaignsData) ? campaignsData.length : 0)
+    } catch (err) {
+      toast({
+        variant: 'error',
+        title: 'Failed to load advisor',
+        description: err instanceof Error ? err.message : undefined,
       })
-    }
-
-    if (activeCampaigns.length === 0 && campaigns.length > 0) {
-      tips.push({
-        type: 'warning',
-        title: 'No active campaigns',
-        description: 'All your campaigns are paused or in draft. Activate at least one campaign to start receiving traffic.',
-      })
-    }
-
-    // Cross-platform suggestions
-    const platformsWithData = platforms.filter(p => reports.some(r => r.platform === p))
-    const missingPlatforms = platforms.filter(p => !platformsWithData.includes(p))
-    if (missingPlatforms.length > 0 && platformsWithData.length > 0) {
-      tips.push({
-        type: 'opportunity',
-        title: 'Expand to new platforms',
-        description: `You're not running ads on ${missingPlatforms.map(p => p === 'meta' ? 'Meta' : p === 'tiktok' ? 'TikTok' : 'Google').join(', ')}. Diversifying platforms can help reach new audiences and reduce CPA.`,
-      })
-    }
-
-    if (tips.length === 0) {
-      tips.push({
-        type: 'optimization',
-        title: 'Get started',
-        description: 'Connect your ad platforms in Settings and create your first campaign to start receiving AI-powered optimization advice.',
-      })
-    }
-
-    return tips
-  }
-
-  const adviceIcon = (type: string) => {
-    switch (type) {
-      case 'warning': return '⚠️'
-      case 'opportunity': return '🚀'
-      default: return '💡'
+    } finally {
+      setLoading(false)
     }
   }
 
-  const adviceVariant = (type: string) => {
-    switch (type) {
-      case 'warning': return 'warning' as const
-      case 'opportunity': return 'success' as const
-      default: return 'info' as const
+  async function refreshAdvice() {
+    setRefreshing(true)
+    try {
+      const res = await fetch(api('/api/advisor'))
+      const data: AdvisorResponse = await res.json()
+      if (Array.isArray(data.advice)) {
+        setAdvice(data.advice)
+        setSource(data.source)
+        setModel(data.model)
+        toast({ variant: 'success', title: 'Advice refreshed' })
+      }
+    } catch (err) {
+      toast({
+        variant: 'error',
+        title: 'Refresh failed',
+        description: err instanceof Error ? err.message : undefined,
+      })
+    } finally {
+      setRefreshing(false)
     }
+  }
+
+  const severityIcon: Record<Advice['severity'], string> = {
+    alert: '🚨',
+    warning: '⚠️',
+    opportunity: '🚀',
+    info: '💡',
+  }
+
+  const severityVariant: Record<
+    Advice['severity'],
+    'info' | 'warning' | 'success' | 'danger'
+  > = {
+    alert: 'danger',
+    warning: 'warning',
+    opportunity: 'success',
+    info: 'info',
   }
 
   if (loading) {
-    return <div className="flex items-center justify-center h-64 text-gray-500">Loading advisor...</div>
+    return (
+      <div className="flex items-center justify-center h-64 text-gray-500">
+        Loading advisor...
+      </div>
+    )
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">AI Advisor</h1>
-        <p className="text-gray-500 text-sm mt-1">AI-powered optimization suggestions based on your campaign performance</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">AI Advisor</h1>
+          <p className="text-gray-500 text-sm mt-1">
+            {source === 'llm'
+              ? `Recommendations generated by ${model || 'Claude'} based on your last 7 days of performance.`
+              : source === 'rules'
+              ? 'Rule-based recommendations. Set ANTHROPIC_API_KEY to unlock LLM-generated advice.'
+              : 'AI-powered optimization suggestions.'}
+          </p>
+        </div>
+        <Button variant="outline" onClick={refreshAdvice} disabled={refreshing}>
+          {refreshing ? 'Refreshing…' : 'Refresh Advice'}
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="p-5 text-center">
-          <p className="text-3xl font-bold">{campaigns.length}</p>
+          <p className="text-3xl font-bold">{campaignCount}</p>
           <p className="text-sm text-gray-500 mt-1">Total Campaigns</p>
         </Card>
         <Card className="p-5 text-center">
-          <p className="text-3xl font-bold">{formatCurrency(reports.reduce((s, r) => s + r.spend, 0))}</p>
+          <p className="text-3xl font-bold">{formatCurrency(reports.reduce((s, r) => s + (r.spend || 0), 0))}</p>
           <p className="text-sm text-gray-500 mt-1">Total Spend</p>
         </Card>
         <Card className="p-5 text-center">
-          <p className="text-3xl font-bold">{formatNumber(reports.reduce((s, r) => s + r.conversions, 0))}</p>
+          <p className="text-3xl font-bold">{formatNumber(reports.reduce((s, r) => s + (r.conversions || 0), 0))}</p>
           <p className="text-sm text-gray-500 mt-1">Total Conversions</p>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Optimization Advice ({advice.length})</CardTitle>
+          <CardTitle>
+            Recommendations ({advice.length})
+            {source === 'llm' && (
+              <Badge variant="info" className="ml-2 align-middle">AI</Badge>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
             {advice.map((a, i) => (
               <div key={i} className="border rounded-lg p-4">
                 <div className="flex items-start gap-3">
-                  <span className="text-xl mt-0.5">{adviceIcon(a.type)}</span>
+                  <span className="text-xl mt-0.5">{severityIcon[a.severity] || '💡'}</span>
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <h3 className="font-semibold text-sm">{a.title}</h3>
-                      <Badge variant={adviceVariant(a.type)}>{a.type}</Badge>
-                      {a.platform && <Badge>{a.platform}</Badge>}
+                      <Badge variant={severityVariant[a.severity] || 'info'}>
+                        {a.severity}
+                      </Badge>
                     </div>
                     <p className="text-sm text-gray-600">{a.description}</p>
+                    {a.recommendedAction && (
+                      <p className="text-sm text-blue-700 mt-2 flex items-start gap-1.5">
+                        <span>→</span>
+                        <span>{a.recommendedAction}</span>
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

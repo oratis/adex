@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
+import { sendMail } from '@/lib/mailer'
+import { completeText, isLLMConfigured } from '@/lib/llm'
 
 export async function POST() {
   try {
     const user = await requireAuth()
 
-    // Get recent reports
+    // Last 24h of performance
     const endDate = new Date()
     const startDate = new Date(Date.now() - 24 * 60 * 60 * 1000)
 
@@ -26,48 +28,92 @@ export async function POST() {
     const totalImpressions = reports.reduce((s, r) => s + r.impressions, 0)
     const totalClicks = reports.reduce((s, r) => s + r.clicks, 0)
     const totalConversions = reports.reduce((s, r) => s + r.conversions, 0)
+    const totalInstalls = reports.reduce((s, r) => s + r.installs, 0)
+
+    // Optional AI-generated narrative when Anthropic is configured
+    let aiSummary = ''
+    if (isLLMConfigured() && reports.length > 0) {
+      try {
+        aiSummary = await completeText(
+          `Write a 2-3 sentence executive summary for this advertiser's last 24 hours of ad performance. Be concrete and cite numbers.
+
+Spend: $${totalSpend.toFixed(2)}
+Revenue: $${totalRevenue.toFixed(2)}
+Impressions: ${totalImpressions}
+Clicks: ${totalClicks}
+Conversions: ${totalConversions}
+Active campaigns: ${campaigns.length}`,
+          { maxTokens: 300, temperature: 0.4 }
+        )
+      } catch (err) {
+        console.error('Digest LLM summary failed:', err)
+      }
+    }
+
+    const roas = totalSpend > 0 ? totalRevenue / totalSpend : 0
+    const ctr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0
 
     const digestContent = `
-      <h2>Daily Ad Performance Report</h2>
-      <p>Date: ${endDate.toLocaleDateString()}</p>
-      <hr/>
-      <h3>Summary</h3>
-      <ul>
-        <li><strong>Active Campaigns:</strong> ${campaigns.length}</li>
-        <li><strong>Total Spend:</strong> $${totalSpend.toFixed(2)}</li>
-        <li><strong>Revenue:</strong> $${totalRevenue.toFixed(2)}</li>
-        <li><strong>ROAS:</strong> ${totalSpend > 0 ? (totalRevenue / totalSpend).toFixed(2) : 'N/A'}x</li>
-        <li><strong>Impressions:</strong> ${totalImpressions.toLocaleString()}</li>
-        <li><strong>Clicks:</strong> ${totalClicks.toLocaleString()}</li>
-        <li><strong>Conversions:</strong> ${totalConversions.toLocaleString()}</li>
-      </ul>
-      <h3>Recommendations</h3>
-      <ul>
-        ${totalSpend > 0 && totalRevenue / totalSpend < 1 ? '<li>ROAS is below 1x. Consider pausing underperforming campaigns.</li>' : ''}
-        ${totalImpressions > 0 && (totalClicks / totalImpressions) < 0.01 ? '<li>CTR is low. Test new creative variants.</li>' : ''}
-        ${campaigns.length === 0 ? '<li>No active campaigns. Launch campaigns to start generating results.</li>' : ''}
-      </ul>
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; color: #111827;">
+        <h2 style="color:#2563eb; margin-bottom: 4px;">Adex Daily Digest</h2>
+        <p style="color:#6b7280; margin-top:0;">${endDate.toLocaleDateString()}</p>
+        ${aiSummary ? `<p style="background:#f3f4f6; padding:12px 16px; border-radius:8px;">${aiSummary}</p>` : ''}
+        <h3>Last 24 hours</h3>
+        <table style="width:100%; border-collapse: collapse;">
+          <tbody>
+            <tr><td style="padding:6px 0;">Active Campaigns</td><td style="text-align:right;"><strong>${campaigns.length}</strong></td></tr>
+            <tr><td style="padding:6px 0;">Spend</td><td style="text-align:right;"><strong>$${totalSpend.toFixed(2)}</strong></td></tr>
+            <tr><td style="padding:6px 0;">Revenue</td><td style="text-align:right;"><strong>$${totalRevenue.toFixed(2)}</strong></td></tr>
+            <tr><td style="padding:6px 0;">ROAS</td><td style="text-align:right;"><strong>${roas.toFixed(2)}x</strong></td></tr>
+            <tr><td style="padding:6px 0;">Impressions</td><td style="text-align:right;"><strong>${totalImpressions.toLocaleString()}</strong></td></tr>
+            <tr><td style="padding:6px 0;">Clicks</td><td style="text-align:right;"><strong>${totalClicks.toLocaleString()}</strong> (CTR ${ctr.toFixed(2)}%)</td></tr>
+            <tr><td style="padding:6px 0;">Conversions</td><td style="text-align:right;"><strong>${totalConversions.toLocaleString()}</strong></td></tr>
+            <tr><td style="padding:6px 0;">Installs</td><td style="text-align:right;"><strong>${totalInstalls.toLocaleString()}</strong></td></tr>
+          </tbody>
+        </table>
+        <h3 style="margin-top:24px;">Signals</h3>
+        <ul style="padding-left:20px;">
+          ${totalSpend > 0 && roas < 1 ? '<li>ROAS is below 1x — review underperformers in the Advisor tab.</li>' : ''}
+          ${totalImpressions > 1000 && ctr < 1 ? '<li>CTR is under 1% — creative may need a refresh.</li>' : ''}
+          ${campaigns.length === 0 ? '<li>No active campaigns. Launch one to start driving results.</li>' : ''}
+          ${reports.length === 0 ? '<li>No performance data yet — connect platforms and run Sync.</li>' : ''}
+        </ul>
+        <p style="color:#9ca3af; font-size:12px; margin-top:32px;">Generated by Adex · You\u2019re receiving this because you set a daily report email in Settings.</p>
+      </div>
     `
 
-    // Save digest
     const digest = await prisma.dailyDigest.create({
       data: {
         userId: user.id,
         date: endDate,
         content: digestContent,
-        advice: 'Review recommendations above and adjust campaigns accordingly.',
+        advice: aiSummary || 'Review recommendations in the Advisor tab.',
       },
     })
 
-    // If user has email configured, would send email here
-    // For now, just return the digest
+    let emailStatus: { sent: boolean; reason?: string; messageId?: string } = { sent: false }
     if (user.dailyReportEmail) {
-      // In production: use nodemailer to send email
-      // await sendEmail(user.dailyReportEmail, 'Adex Daily Report', digestContent)
+      const result = await sendMail({
+        to: user.dailyReportEmail,
+        subject: `Adex Daily Report — ${endDate.toLocaleDateString()}`,
+        html: digestContent,
+      })
+      if (result.ok) {
+        emailStatus = { sent: true, messageId: result.messageId }
+        await prisma.dailyDigest.update({
+          where: { id: digest.id },
+          data: { sentAt: new Date() },
+        })
+      } else {
+        emailStatus = { sent: false, reason: result.reason }
+      }
+    } else {
+      emailStatus = { sent: false, reason: 'No dailyReportEmail configured on profile' }
     }
 
-    return NextResponse.json({ digest, emailSent: !!user.dailyReportEmail })
-  } catch {
-    return NextResponse.json({ error: 'Failed to generate digest' }, { status: 500 })
+    return NextResponse.json({ digest, email: emailStatus })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to generate digest'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
