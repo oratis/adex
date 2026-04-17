@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
+import { useToast } from '@/components/ui/toast'
 import { api } from '@/lib/utils'
 
 interface Asset {
@@ -36,6 +37,7 @@ interface BreadcrumbItem {
 }
 
 export default function AssetsPage() {
+  const { toast } = useToast()
   const [assets, setAssets] = useState<Asset[]>([])
   const [filterType, setFilterType] = useState('')
   const [filterSource, setFilterSource] = useState('')
@@ -47,6 +49,12 @@ export default function AssetsPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploadName, setUploadName] = useState('')
   const [uploadTags, setUploadTags] = useState('')
+
+  // Bulk selection
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showBulkTag, setShowBulkTag] = useState(false)
+  const [bulkTagsInput, setBulkTagsInput] = useState('')
 
   // Folder browsing state
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
@@ -93,6 +101,10 @@ export default function AssetsPage() {
   }
 
   function handleAssetClick(asset: Asset) {
+    if (selectMode && !asset.isFolder) {
+      toggleSelect(asset.id)
+      return
+    }
     if (asset.isFolder) {
       navigateToFolder(asset)
     } else {
@@ -153,9 +165,79 @@ export default function AssetsPage() {
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this asset?')) return
-    await fetch(api(`/api/assets/${id}`), { method: 'DELETE' })
+    const res = await fetch(api(`/api/assets/${id}`), { method: 'DELETE' })
+    if (res.ok) {
+      toast({ variant: 'success', title: 'Asset deleted' })
+    } else {
+      toast({ variant: 'error', title: 'Delete failed' })
+    }
     loadAssets()
     setSelectedAsset(null)
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }
+
+  async function handleBulkDelete() {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    if (!confirm(`Delete ${ids.length} selected asset(s)? This cannot be undone.`)) return
+    try {
+      const res = await fetch(api('/api/assets/bulk'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', ids }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Bulk delete failed')
+      toast({
+        variant: 'success',
+        title: `Deleted ${data.deleted} asset(s)`,
+        description: data.skipped ? `${data.skipped} skipped (not owned)` : undefined,
+      })
+      exitSelectMode()
+      loadAssets()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Delete failed', description: err instanceof Error ? err.message : undefined })
+    }
+  }
+
+  async function handleBulkTag(e: React.FormEvent) {
+    e.preventDefault()
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    try {
+      const tagsArr = bulkTagsInput.split(',').map(t => t.trim()).filter(Boolean)
+      const res = await fetch(api('/api/assets/bulk'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'tag', ids, tags: JSON.stringify(tagsArr) }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Bulk tag failed')
+      toast({
+        variant: 'success',
+        title: `Tagged ${data.updated} asset(s)`,
+        description: data.skipped ? `${data.skipped} skipped (not owned)` : undefined,
+      })
+      setShowBulkTag(false)
+      setBulkTagsInput('')
+      exitSelectMode()
+      loadAssets()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Tag failed', description: err instanceof Error ? err.message : undefined })
+    }
   }
 
   function formatSize(bytes: number | null) {
@@ -176,12 +258,31 @@ export default function AssetsPage() {
           <p className="text-gray-500 text-sm mt-1">Shared creative assets — all users can contribute and browse</p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant={selectMode ? 'primary' : 'outline'}
+            onClick={() => { if (selectMode) exitSelectMode(); else setSelectMode(true) }}
+          >
+            {selectMode ? 'Cancel Select' : '☑ Select'}
+          </Button>
           <Button variant="outline" onClick={handleDriveSync} disabled={syncing}>
             {syncing ? 'Syncing...' : '🔄 Sync Google Drive'}
           </Button>
           <Button onClick={() => setShowUpload(true)}>+ Upload Asset</Button>
         </div>
       </div>
+
+      {selectMode && selectedIds.size > 0 && (
+        <div className="sticky top-0 z-10 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center justify-between">
+          <span className="text-sm font-medium text-blue-900">
+            {selectedIds.size} asset{selectedIds.size === 1 ? '' : 's'} selected
+          </span>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setShowBulkTag(true)}>Tag</Button>
+            <Button size="sm" variant="danger" onClick={handleBulkDelete}>Delete</Button>
+            <Button size="sm" variant="outline" onClick={exitSelectMode}>Clear</Button>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <Card>
@@ -243,7 +344,7 @@ export default function AssetsPage() {
                 <Button variant="outline" onClick={handleDriveSync} disabled={syncing}>
                   {syncing ? 'Syncing...' : 'Sync from Drive'}
                 </Button>
-                <Button variant="outline" onClick={() => window.location.href = '/adex/seedance2'}>Generate with AI</Button>
+                <Button variant="outline" onClick={() => window.location.href = api('/seedance2')}>Generate with AI</Button>
               </div>
             )}
           </CardContent>
@@ -279,12 +380,25 @@ export default function AssetsPage() {
                 <h3 className="text-sm font-medium text-gray-500 mb-2">Files ({fileAssets.length})</h3>
               )}
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                {fileAssets.map((a) => (
+                {fileAssets.map((a) => {
+                  const isSelected = selectedIds.has(a.id)
+                  return (
                   <div
                     key={a.id}
-                    className="border rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-shadow bg-white"
-                    onClick={() => setSelectedAsset(a)}
+                    className={`relative border rounded-lg overflow-hidden cursor-pointer transition-all bg-white ${
+                      isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'hover:shadow-md'
+                    }`}
+                    onClick={() => handleAssetClick(a)}
                   >
+                    {selectMode && (
+                      <div className="absolute top-2 left-2 z-10">
+                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
+                          isSelected ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'
+                        }`}>
+                          {isSelected && <span className="text-white text-xs leading-none">✓</span>}
+                        </div>
+                      </div>
+                    )}
                     <div className="aspect-square bg-gray-100 flex items-center justify-center overflow-hidden">
                       {a.type === 'video' && a.thumbnailUrl ? (
                         <img src={a.thumbnailUrl} alt={a.name} className="w-full h-full object-cover" />
@@ -315,12 +429,35 @@ export default function AssetsPage() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
         </div>
       )}
+
+      {/* Bulk Tag Modal */}
+      <Modal open={showBulkTag} onClose={() => setShowBulkTag(false)} title="Set Tags for Selected">
+        <form onSubmit={handleBulkTag} className="space-y-4">
+          <p className="text-sm text-gray-500">
+            Replace tags on {selectedIds.size} asset{selectedIds.size === 1 ? '' : 's'} (comma-separated).
+            Only assets you uploaded will be updated.
+          </p>
+          <div>
+            <label className="block text-sm font-medium mb-1">Tags</label>
+            <Input
+              value={bulkTagsInput}
+              onChange={(e) => setBulkTagsInput(e.target.value)}
+              placeholder="product, lifestyle, tech"
+            />
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="outline" onClick={() => setShowBulkTag(false)}>Cancel</Button>
+            <Button type="submit">Apply Tags</Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Upload Modal */}
       <Modal open={showUpload} onClose={() => setShowUpload(false)} title="Upload to Asset Library">

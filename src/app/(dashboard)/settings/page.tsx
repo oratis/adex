@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Tabs } from '@/components/ui/tabs'
+import { useToast } from '@/components/ui/toast'
 import { api } from '@/lib/utils'
 
 interface PlatformAuth {
@@ -92,6 +93,7 @@ const PLATFORMS: PlatformConfig[] = [
 ]
 
 export default function SettingsPage() {
+  const { toast } = useToast()
   const [auths, setAuths] = useState<PlatformAuth[]>([])
   const [formData, setFormData] = useState<Record<string, Record<string, string>>>({})
   const [saving, setSaving] = useState<string | null>(null)
@@ -164,10 +166,14 @@ export default function SettingsPage() {
       const result = await res.json()
       if (result.error) {
         setTestError(result.error)
+        toast({ variant: 'error', title: 'Save failed', description: result.error })
       } else {
+        toast({ variant: 'success', title: `${platformId} connection saved` })
         // Reload to get updated saved values
         await loadAuths()
       }
+    } catch (err) {
+      toast({ variant: 'error', title: 'Save failed', description: err instanceof Error ? err.message : undefined })
     } finally {
       setSaving(null)
     }
@@ -175,15 +181,21 @@ export default function SettingsPage() {
 
   async function removePlatform(platformId: string) {
     if (!confirm(`Remove ${platformId} authorization?`)) return
-    await fetch(api('/api/platforms'), {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform: platformId }),
-    })
-    setFormData(prev => ({ ...prev, [platformId]: {} }))
-    setGoogleAccounts([])
-    setTestError(null)
-    await loadAuths()
+    try {
+      const res = await fetch(api('/api/platforms'), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: platformId }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Remove failed')
+      setFormData(prev => ({ ...prev, [platformId]: {} }))
+      setGoogleAccounts([])
+      setTestError(null)
+      await loadAuths()
+      toast({ variant: 'success', title: `${platformId} disconnected` })
+    } catch (err) {
+      toast({ variant: 'error', title: 'Remove failed', description: err instanceof Error ? err.message : undefined })
+    }
   }
 
   async function testGoogleConnection() {
@@ -212,11 +224,15 @@ export default function SettingsPage() {
     e.preventDefault()
     setSavingProfile(true)
     try {
-      await fetch(api('/api/settings'), {
+      const res = await fetch(api('/api/settings'), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(profile),
       })
+      if (!res.ok) throw new Error((await res.json()).error || 'Save failed')
+      toast({ variant: 'success', title: 'Profile saved' })
+    } catch (err) {
+      toast({ variant: 'error', title: 'Save failed', description: err instanceof Error ? err.message : undefined })
     } finally {
       setSavingProfile(false)
     }

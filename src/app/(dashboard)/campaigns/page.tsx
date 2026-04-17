@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Modal } from '@/components/ui/modal'
+import { useToast } from '@/components/ui/toast'
 import { api } from '@/lib/utils'
 
 const COUNTRIES = [
@@ -39,24 +40,46 @@ interface Campaign {
   adGroups: { id: string; ads: { id: string }[] }[]
 }
 
+type FormState = {
+  name: string
+  platform: string
+  objective: string
+  targetCountries: string[]
+  ageMin: number
+  ageMax: number
+  gender: string
+  startDate: string
+  endDate: string
+  budgetType: string
+  budgetAmount: number
+}
+
+const emptyForm: FormState = {
+  name: '', platform: 'google', objective: 'awareness',
+  targetCountries: [], ageMin: 18, ageMax: 65, gender: 'all',
+  startDate: '', endDate: '', budgetType: 'daily', budgetAmount: 50,
+}
+
 export default function CampaignsPage() {
+  const { toast } = useToast()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [showCreate, setShowCreate] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [form, setForm] = useState({
-    name: '', platform: 'google', objective: 'awareness',
-    targetCountries: [] as string[], ageMin: 18, ageMax: 65, gender: 'all',
-    startDate: '', endDate: '', budgetType: 'daily', budgetAmount: 50,
-  })
+  const [form, setForm] = useState<FormState>(emptyForm)
 
   useEffect(() => {
     loadCampaigns()
   }, [])
 
   async function loadCampaigns() {
-    const res = await fetch(api('/api/campaigns'))
-    const data = await res.json()
-    setCampaigns(Array.isArray(data) ? data : [])
+    try {
+      const res = await fetch(api('/api/campaigns'))
+      const data = await res.json()
+      setCampaigns(Array.isArray(data) ? data : [])
+    } catch {
+      toast({ variant: 'error', title: 'Failed to load campaigns' })
+    }
   }
 
   function toggleCountry(code: string) {
@@ -68,43 +91,84 @@ export default function CampaignsPage() {
     }))
   }
 
-  async function handleCreate(e: React.FormEvent) {
+  function openEdit(c: Campaign) {
+    setEditingId(c.id)
+    setForm({
+      name: c.name,
+      platform: c.platform,
+      objective: c.objective || 'awareness',
+      targetCountries: c.targetCountries ? (JSON.parse(c.targetCountries) as string[]) : [],
+      ageMin: c.ageMin ?? 18,
+      ageMax: c.ageMax ?? 65,
+      gender: c.gender || 'all',
+      startDate: c.startDate ? c.startDate.slice(0, 10) : '',
+      endDate: c.endDate ? c.endDate.slice(0, 10) : '',
+      budgetType: c.budgets?.[0]?.type || 'daily',
+      budgetAmount: c.budgets?.[0]?.amount || 50,
+    })
+  }
+
+  function closeModals() {
+    setShowCreate(false)
+    setEditingId(null)
+    setForm(emptyForm)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     try {
-      const res = await fetch(api('/api/campaigns'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: form.name,
-          platform: form.platform,
-          objective: form.objective,
-          targetCountries: form.targetCountries,
-          ageMin: form.ageMin,
-          ageMax: form.ageMax,
-          gender: form.gender,
-          startDate: form.startDate || undefined,
-          endDate: form.endDate || undefined,
-        }),
-      })
-      const campaign = await res.json()
-
-      // Create budget
-      if (campaign.id) {
-        await fetch(api('/api/budgets'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            campaignId: campaign.id,
-            type: form.budgetType,
-            amount: form.budgetAmount,
-          }),
-        })
+      const payload = {
+        name: form.name,
+        platform: form.platform,
+        objective: form.objective,
+        targetCountries: form.targetCountries,
+        ageMin: form.ageMin,
+        ageMax: form.ageMax,
+        gender: form.gender,
+        startDate: form.startDate || undefined,
+        endDate: form.endDate || undefined,
       }
 
-      setShowCreate(false)
-      setForm({ name: '', platform: 'google', objective: 'awareness', targetCountries: [], ageMin: 18, ageMax: 65, gender: 'all', startDate: '', endDate: '', budgetType: 'daily', budgetAmount: 50 })
+      if (editingId) {
+        const res = await fetch(api(`/api/campaigns/${editingId}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) throw new Error((await res.json()).error || 'Update failed')
+        toast({ variant: 'success', title: 'Campaign updated' })
+      } else {
+        const res = await fetch(api('/api/campaigns'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const campaign = await res.json()
+        if (!res.ok) throw new Error(campaign.error || 'Create failed')
+
+        if (campaign.id) {
+          await fetch(api('/api/budgets'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              campaignId: campaign.id,
+              type: form.budgetType,
+              amount: form.budgetAmount,
+            }),
+          })
+        }
+        toast({ variant: 'success', title: 'Campaign created' })
+      }
+
+      closeModals()
       loadCampaigns()
+    } catch (err) {
+      toast({
+        variant: 'error',
+        title: editingId ? 'Update failed' : 'Create failed',
+        description: err instanceof Error ? err.message : undefined,
+      })
     } finally {
       setLoading(false)
     }
@@ -112,19 +176,46 @@ export default function CampaignsPage() {
 
   async function launchCampaign(id: string) {
     if (!confirm('Launch this campaign to the ad platform?')) return
-    const res = await fetch(api(`/api/campaigns/${id}/launch`), { method: 'POST' })
-    const data = await res.json()
-    if (data.success) {
+    try {
+      const res = await fetch(api(`/api/campaigns/${id}/launch`), { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        toast({ variant: 'success', title: 'Campaign launched' })
+        loadCampaigns()
+      } else {
+        toast({ variant: 'error', title: 'Launch failed', description: data.error })
+      }
+    } catch (err) {
+      toast({ variant: 'error', title: 'Launch failed', description: err instanceof Error ? err.message : undefined })
+    }
+  }
+
+  async function toggleStatus(c: Campaign) {
+    const nextStatus = c.status === 'active' ? 'paused' : 'active'
+    try {
+      const res = await fetch(api(`/api/campaigns/${c.id}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      })
+      if (!res.ok) throw new Error()
+      toast({ variant: 'success', title: `Campaign ${nextStatus}` })
       loadCampaigns()
-    } else {
-      alert(data.error || 'Launch failed')
+    } catch {
+      toast({ variant: 'error', title: 'Status update failed' })
     }
   }
 
   async function deleteCampaign(id: string) {
-    if (!confirm('Delete this campaign?')) return
-    await fetch(api(`/api/campaigns/${id}`), { method: 'DELETE' })
-    loadCampaigns()
+    if (!confirm('Delete this campaign? This cannot be undone.')) return
+    try {
+      const res = await fetch(api(`/api/campaigns/${id}`), { method: 'DELETE' })
+      if (!res.ok) throw new Error()
+      toast({ variant: 'success', title: 'Campaign deleted' })
+      loadCampaigns()
+    } catch {
+      toast({ variant: 'error', title: 'Delete failed' })
+    }
   }
 
   const statusVariant = (s: string) => {
@@ -136,6 +227,10 @@ export default function CampaignsPage() {
     }
   }
 
+  const modalOpen = showCreate || editingId !== null
+  const modalTitle = editingId ? 'Edit Campaign' : 'Create New Campaign'
+  const submitLabel = editingId ? 'Save Changes' : 'Create Campaign'
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -143,14 +238,14 @@ export default function CampaignsPage() {
           <h1 className="text-2xl font-bold">Campaigns</h1>
           <p className="text-gray-500 text-sm mt-1">Manage your ad campaigns across all platforms</p>
         </div>
-        <Button onClick={() => setShowCreate(true)}>+ New Campaign</Button>
+        <Button onClick={() => { setForm(emptyForm); setShowCreate(true) }}>+ New Campaign</Button>
       </div>
 
       {campaigns.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <p className="text-gray-500">No campaigns yet. Create your first campaign to start advertising.</p>
-            <Button className="mt-4" onClick={() => setShowCreate(true)}>Create Campaign</Button>
+            <Button className="mt-4" onClick={() => { setForm(emptyForm); setShowCreate(true) }}>Create Campaign</Button>
           </CardContent>
         </Card>
       ) : (
@@ -172,7 +267,7 @@ export default function CampaignsPage() {
                         {c.targetCountries && (
                           <>
                             <span>&middot;</span>
-                            <span>{JSON.parse(c.targetCountries).join(', ')}</span>
+                            <span>{(JSON.parse(c.targetCountries) as string[]).join(', ')}</span>
                           </>
                         )}
                       </div>
@@ -182,6 +277,13 @@ export default function CampaignsPage() {
                     {c.status === 'draft' && (
                       <Button size="sm" onClick={() => launchCampaign(c.id)}>Launch</Button>
                     )}
+                    {c.status === 'active' && (
+                      <Button size="sm" variant="outline" onClick={() => toggleStatus(c)}>Pause</Button>
+                    )}
+                    {c.status === 'paused' && (
+                      <Button size="sm" onClick={() => toggleStatus(c)}>Resume</Button>
+                    )}
+                    <Button size="sm" variant="outline" onClick={() => openEdit(c)}>Edit</Button>
                     <Button size="sm" variant="danger" onClick={() => deleteCampaign(c.id)}>Delete</Button>
                   </div>
                 </div>
@@ -191,8 +293,8 @@ export default function CampaignsPage() {
         </div>
       )}
 
-      <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Create New Campaign" className="max-w-2xl">
-        <form onSubmit={handleCreate} className="space-y-4">
+      <Modal open={modalOpen} onClose={closeModals} title={modalTitle} className="max-w-2xl">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">Campaign Name</label>
             <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="My Campaign" required />
@@ -201,7 +303,7 @@ export default function CampaignsPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Platform</label>
-              <Select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value }))}>
+              <Select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value }))} disabled={!!editingId}>
                 <option value="google">Google Ads</option>
                 <option value="meta">Meta (Facebook/Instagram)</option>
                 <option value="tiktok">TikTok</option>
@@ -268,26 +370,31 @@ export default function CampaignsPage() {
             </div>
           </div>
 
-          <div className="border-t pt-4">
-            <h4 className="font-medium mb-3">Budget</h4>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Budget Type</label>
-                <Select value={form.budgetType} onChange={e => setForm(f => ({ ...f, budgetType: e.target.value }))}>
-                  <option value="daily">Daily</option>
-                  <option value="lifetime">Lifetime</option>
-                </Select>
+          {!editingId && (
+            <div className="border-t pt-4">
+              <h4 className="font-medium mb-3">Budget</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Budget Type</label>
+                  <Select value={form.budgetType} onChange={e => setForm(f => ({ ...f, budgetType: e.target.value }))}>
+                    <option value="daily">Daily</option>
+                    <option value="lifetime">Lifetime</option>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Amount (USD)</label>
+                  <Input type="number" value={form.budgetAmount} onChange={e => setForm(f => ({ ...f, budgetAmount: +e.target.value }))} min={1} step={0.01} />
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Amount (USD)</label>
-                <Input type="number" value={form.budgetAmount} onChange={e => setForm(f => ({ ...f, budgetAmount: +e.target.value }))} min={1} step={0.01} />
-              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Edit budgets on the <span className="font-medium">Budget</span> page.
+              </p>
             </div>
-          </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-2">
-            <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button type="submit" disabled={loading}>{loading ? 'Creating...' : 'Create Campaign'}</Button>
+            <Button type="button" variant="outline" onClick={closeModals}>Cancel</Button>
+            <Button type="submit" disabled={loading}>{loading ? 'Saving...' : submitLabel}</Button>
           </div>
         </form>
       </Modal>

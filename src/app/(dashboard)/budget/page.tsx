@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Modal } from '@/components/ui/modal'
 import { StatCard } from '@/components/layout/stat-card'
+import { useToast } from '@/components/ui/toast'
 import { formatCurrency, api } from '@/lib/utils'
 
 interface Budget {
@@ -15,6 +16,7 @@ interface Budget {
   amount: number
   currency: string
   spent: number
+  campaignId: string | null
   startDate: string | null
   endDate: string | null
   campaign: { id: string; name: string; platform: string } | null
@@ -27,58 +29,131 @@ interface Campaign {
   platform: string
 }
 
+type FormState = {
+  campaignId: string
+  type: string
+  amount: number
+  currency: string
+  startDate: string
+  endDate: string
+}
+
+const emptyForm: FormState = {
+  campaignId: '', type: 'daily', amount: 50, currency: 'USD', startDate: '', endDate: '',
+}
+
+const CURRENCIES = ['USD', 'EUR', 'GBP', 'CNY', 'JPY', 'AUD', 'CAD', 'HKD', 'SGD']
+
 export default function BudgetPage() {
+  const { toast } = useToast()
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [showCreate, setShowCreate] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [form, setForm] = useState({
-    campaignId: '', type: 'daily', amount: 50, currency: 'USD', startDate: '', endDate: '',
-  })
+  const [form, setForm] = useState<FormState>(emptyForm)
 
   useEffect(() => {
     loadData()
   }, [])
 
   async function loadData() {
-    const [budgetRes, campaignRes] = await Promise.all([
-      fetch(api('/api/budgets')),
-      fetch(api('/api/campaigns')),
-    ])
-    const budgetData = await budgetRes.json()
-    const campaignData = await campaignRes.json()
-    setBudgets(Array.isArray(budgetData) ? budgetData : [])
-    setCampaigns(Array.isArray(campaignData) ? campaignData : [])
+    try {
+      const [budgetRes, campaignRes] = await Promise.all([
+        fetch(api('/api/budgets')),
+        fetch(api('/api/campaigns')),
+      ])
+      const budgetData = await budgetRes.json()
+      const campaignData = await campaignRes.json()
+      setBudgets(Array.isArray(budgetData) ? budgetData : [])
+      setCampaigns(Array.isArray(campaignData) ? campaignData : [])
+    } catch {
+      toast({ variant: 'error', title: 'Failed to load budgets' })
+    }
   }
 
-  async function handleCreate(e: React.FormEvent) {
+  function openEdit(b: Budget) {
+    setEditingId(b.id)
+    setForm({
+      campaignId: b.campaignId || '',
+      type: b.type,
+      amount: b.amount,
+      currency: b.currency,
+      startDate: b.startDate ? b.startDate.slice(0, 10) : '',
+      endDate: b.endDate ? b.endDate.slice(0, 10) : '',
+    })
+  }
+
+  function closeModals() {
+    setShowCreate(false)
+    setEditingId(null)
+    setForm(emptyForm)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     try {
-      await fetch(api('/api/budgets'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          campaignId: form.campaignId || undefined,
-          type: form.type,
-          amount: form.amount,
-          currency: form.currency,
-          startDate: form.startDate || undefined,
-          endDate: form.endDate || undefined,
-        }),
-      })
-      setShowCreate(false)
-      setForm({ campaignId: '', type: 'daily', amount: 50, currency: 'USD', startDate: '', endDate: '' })
+      const payload = {
+        campaignId: form.campaignId || undefined,
+        type: form.type,
+        amount: form.amount,
+        currency: form.currency,
+        startDate: form.startDate || undefined,
+        endDate: form.endDate || undefined,
+      }
+
+      if (editingId) {
+        const res = await fetch(api(`/api/budgets/${editingId}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) throw new Error((await res.json()).error || 'Update failed')
+        toast({ variant: 'success', title: 'Budget updated' })
+      } else {
+        const res = await fetch(api('/api/budgets'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) throw new Error((await res.json()).error || 'Create failed')
+        toast({ variant: 'success', title: 'Budget added' })
+      }
+
+      closeModals()
       loadData()
+    } catch (err) {
+      toast({
+        variant: 'error',
+        title: editingId ? 'Update failed' : 'Create failed',
+        description: err instanceof Error ? err.message : undefined,
+      })
     } finally {
       setLoading(false)
     }
   }
 
-  const totalBudget = budgets.reduce((s, b) => s + b.amount, 0)
-  const totalSpent = budgets.reduce((s, b) => s + b.spent, 0)
+  async function deleteBudget(id: string) {
+    if (!confirm('Delete this budget?')) return
+    try {
+      const res = await fetch(api(`/api/budgets/${id}`), { method: 'DELETE' })
+      if (!res.ok) throw new Error()
+      toast({ variant: 'success', title: 'Budget deleted' })
+      loadData()
+    } catch {
+      toast({ variant: 'error', title: 'Delete failed' })
+    }
+  }
+
+  const totalBudget = budgets.reduce((s, b) => s + (b.amount || 0), 0)
+  const totalSpent = budgets.reduce((s, b) => s + (b.spent || 0), 0)
   const remaining = totalBudget - totalSpent
   const utilization = totalBudget > 0 ? (totalSpent / totalBudget) * 100 : 0
+
+  const modalOpen = showCreate || editingId !== null
+  const modalTitle = editingId ? 'Edit Budget' : 'Add Budget'
+  const submitLabel = editingId ? 'Save Changes' : 'Add Budget'
 
   return (
     <div className="space-y-6">
@@ -87,7 +162,7 @@ export default function BudgetPage() {
           <h1 className="text-2xl font-bold">Budget</h1>
           <p className="text-gray-500 text-sm mt-1">Manage advertising budgets across campaigns</p>
         </div>
-        <Button onClick={() => setShowCreate(true)}>+ Add Budget</Button>
+        <Button onClick={() => { setForm(emptyForm); setShowCreate(true) }}>+ Add Budget</Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -114,6 +189,7 @@ export default function BudgetPage() {
                     <th className="pb-3 font-medium">Budget</th>
                     <th className="pb-3 font-medium">Spent</th>
                     <th className="pb-3 font-medium">Progress</th>
+                    <th className="pb-3 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -145,6 +221,12 @@ export default function BudgetPage() {
                             <span className="text-xs text-gray-500 w-12 text-right">{pct.toFixed(0)}%</span>
                           </div>
                         </td>
+                        <td className="py-3 text-right">
+                          <div className="inline-flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => openEdit(b)}>Edit</Button>
+                            <Button size="sm" variant="danger" onClick={() => deleteBudget(b.id)}>Delete</Button>
+                          </div>
+                        </td>
                       </tr>
                     )
                   })}
@@ -155,8 +237,8 @@ export default function BudgetPage() {
         </CardContent>
       </Card>
 
-      <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Add Budget">
-        <form onSubmit={handleCreate} className="space-y-4">
+      <Modal open={modalOpen} onClose={closeModals} title={modalTitle}>
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">Campaign (optional)</label>
             <Select value={form.campaignId} onChange={e => setForm(f => ({ ...f, campaignId: e.target.value }))}>
@@ -175,9 +257,15 @@ export default function BudgetPage() {
               </Select>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Amount</label>
-              <Input type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: +e.target.value }))} min={1} step={0.01} />
+              <label className="block text-sm font-medium mb-1">Currency</label>
+              <Select value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value }))}>
+                {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </Select>
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Amount</label>
+            <Input type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: +e.target.value }))} min={1} step={0.01} required />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -190,8 +278,8 @@ export default function BudgetPage() {
             </div>
           </div>
           <div className="flex justify-end gap-3">
-            <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button type="submit" disabled={loading}>{loading ? 'Adding...' : 'Add Budget'}</Button>
+            <Button type="button" variant="outline" onClick={closeModals}>Cancel</Button>
+            <Button type="submit" disabled={loading}>{loading ? 'Saving...' : submitLabel}</Button>
           </div>
         </form>
       </Modal>

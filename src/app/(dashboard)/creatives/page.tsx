@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/select'
 import { Modal } from '@/components/ui/modal'
 import { Badge } from '@/components/ui/badge'
 import { Tabs } from '@/components/ui/tabs'
+import { useToast } from '@/components/ui/toast'
 import { api } from '@/lib/utils'
 
 interface Creative {
@@ -24,11 +25,36 @@ interface Creative {
   createdAt: string
 }
 
+interface Campaign {
+  id: string
+  name: string
+  platform: string
+  status: string
+}
+
+type AttachForm = {
+  campaignId: string
+  name: string
+  headline: string
+  description: string
+  callToAction: string
+  destinationUrl: string
+}
+
+const emptyAttachForm: AttachForm = {
+  campaignId: '', name: '', headline: '', description: '', callToAction: '', destinationUrl: '',
+}
+
 export default function CreativesPage() {
+  const { toast } = useToast()
   const [creatives, setCreatives] = useState<Creative[]>([])
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [showCreate, setShowCreate] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [attaching, setAttaching] = useState(false)
+  const [attachTarget, setAttachTarget] = useState<Creative | null>(null)
+  const [attachForm, setAttachForm] = useState<AttachForm>(emptyAttachForm)
   const fileRef = useRef<HTMLInputElement>(null)
   const [aiForm, setAiForm] = useState({
     name: '', type: 'image', prompt: '', width: 1080, height: 1080, style: '',
@@ -36,12 +62,69 @@ export default function CreativesPage() {
 
   useEffect(() => {
     loadCreatives()
+    loadCampaigns()
   }, [])
 
+  async function loadCampaigns() {
+    try {
+      const res = await fetch(api('/api/campaigns'))
+      const data = await res.json()
+      setCampaigns(Array.isArray(data) ? data : [])
+    } catch {
+      // silent
+    }
+  }
+
+  function openAttach(c: Creative) {
+    setAttachTarget(c)
+    setAttachForm({ ...emptyAttachForm, name: `${c.name} — Ad` })
+  }
+
+  function closeAttach() {
+    setAttachTarget(null)
+    setAttachForm(emptyAttachForm)
+  }
+
+  async function handleAttach(e: React.FormEvent) {
+    e.preventDefault()
+    if (!attachTarget) return
+    if (!attachForm.campaignId) {
+      toast({ variant: 'error', title: 'Pick a campaign' })
+      return
+    }
+    setAttaching(true)
+    try {
+      const res = await fetch(api('/api/ads'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          campaignId: attachForm.campaignId,
+          creativeId: attachTarget.id,
+          name: attachForm.name || attachTarget.name,
+          headline: attachForm.headline || undefined,
+          description: attachForm.description || undefined,
+          callToAction: attachForm.callToAction || undefined,
+          destinationUrl: attachForm.destinationUrl || undefined,
+        }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Attach failed')
+      toast({ variant: 'success', title: 'Creative attached to campaign' })
+      closeAttach()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Attach failed', description: err instanceof Error ? err.message : undefined })
+    } finally {
+      setAttaching(false)
+    }
+  }
+
   async function loadCreatives() {
-    const res = await fetch(api('/api/creatives'))
-    const data = await res.json()
-    setCreatives(Array.isArray(data) ? data : [])
+    try {
+      const res = await fetch(api('/api/creatives'))
+      const data = await res.json()
+      setCreatives(Array.isArray(data) ? data : [])
+    } catch {
+      toast({ variant: 'error', title: 'Failed to load creatives' })
+    }
   }
 
   async function handleUpload(e: React.FormEvent) {
@@ -53,9 +136,14 @@ export default function CreativesPage() {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('name', file.name)
-      await fetch(api('/api/creatives'), { method: 'POST', body: formData })
+      const res = await fetch(api('/api/creatives'), { method: 'POST', body: formData })
+      if (!res.ok) throw new Error((await res.json()).error || 'Upload failed')
+      toast({ variant: 'success', title: 'Creative uploaded' })
       setShowCreate(false)
+      if (fileRef.current) fileRef.current.value = ''
       loadCreatives()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Upload failed', description: err instanceof Error ? err.message : undefined })
     } finally {
       setUploading(false)
     }
@@ -65,7 +153,6 @@ export default function CreativesPage() {
     e.preventDefault()
     setGenerating(true)
     try {
-      // First create the creative record
       const res = await fetch(api('/api/creatives'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -79,8 +166,8 @@ export default function CreativesPage() {
         }),
       })
       const creative = await res.json()
+      if (!res.ok) throw new Error(creative.error || 'Create failed')
 
-      // Then trigger generation
       await fetch(api('/api/creatives/generate'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -94,11 +181,26 @@ export default function CreativesPage() {
         }),
       })
 
+      toast({ variant: 'success', title: 'Generation started', description: 'Creative will appear when ready.' })
       setShowCreate(false)
       setAiForm({ name: '', type: 'image', prompt: '', width: 1080, height: 1080, style: '' })
       loadCreatives()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Generate failed', description: err instanceof Error ? err.message : undefined })
     } finally {
       setGenerating(false)
+    }
+  }
+
+  async function deleteCreative(id: string, name: string) {
+    if (!confirm(`Delete creative "${name}"? This cannot be undone.`)) return
+    try {
+      const res = await fetch(api(`/api/creatives/${id}`), { method: 'DELETE' })
+      if (!res.ok) throw new Error((await res.json()).error || 'Delete failed')
+      toast({ variant: 'success', title: 'Creative deleted' })
+      loadCreatives()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Delete failed', description: err instanceof Error ? err.message : undefined })
     }
   }
 
@@ -125,7 +227,6 @@ export default function CreativesPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <p className="text-gray-500">No creatives yet. Upload files or generate with AI.</p>
-            <p className="text-sm text-gray-400 mt-2">Put files in the <code className="bg-gray-100 px-1 rounded">public/uploads</code> folder, or use the AI generator.</p>
             <Button className="mt-4" onClick={() => setShowCreate(true)}>Add Creative</Button>
           </CardContent>
         </Card>
@@ -136,8 +237,14 @@ export default function CreativesPage() {
               <div className="aspect-video bg-gray-100 rounded-t-xl flex items-center justify-center overflow-hidden">
                 {c.fileUrl ? (
                   c.type === 'video' ? (
-                    <video src={c.fileUrl} className="w-full h-full object-cover" />
+                    <video
+                      src={c.fileUrl}
+                      controls
+                      preload="metadata"
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={c.fileUrl} alt={c.name} className="w-full h-full object-cover" />
                   )
                 ) : (
@@ -148,8 +255,8 @@ export default function CreativesPage() {
                 )}
               </div>
               <CardContent className="py-3">
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
                     <p className="font-medium text-sm truncate">{c.name}</p>
                     <p className="text-xs text-gray-500 capitalize">{c.source} &middot; {c.type}</p>
                   </div>
@@ -158,6 +265,12 @@ export default function CreativesPage() {
                 {c.prompt && (
                   <p className="text-xs text-gray-400 mt-2 line-clamp-2">{c.prompt}</p>
                 )}
+                <div className="flex justify-end gap-2 mt-3">
+                  {c.status === 'ready' && (
+                    <Button size="sm" variant="outline" onClick={() => openAttach(c)}>Attach to Campaign</Button>
+                  )}
+                  <Button size="sm" variant="danger" onClick={() => deleteCreative(c.id, c.name)}>Delete</Button>
+                </div>
               </CardContent>
             </Card>
           ))}
@@ -171,7 +284,7 @@ export default function CreativesPage() {
             label: 'Upload File',
             content: (
               <form onSubmit={handleUpload} className="space-y-4">
-                <p className="text-sm text-gray-500">Upload an image or video from your computer, or place files in the <code className="bg-gray-100 px-1 rounded">public/uploads</code> folder.</p>
+                <p className="text-sm text-gray-500">Upload an image or video from your computer.</p>
                 <div>
                   <label className="block text-sm font-medium mb-1">Select File</label>
                   <input ref={fileRef} type="file" accept="image/*,video/*" className="w-full text-sm" required />
@@ -235,6 +348,59 @@ export default function CreativesPage() {
             ),
           },
         ]} />
+      </Modal>
+
+      <Modal
+        open={attachTarget !== null}
+        onClose={closeAttach}
+        title={attachTarget ? `Attach "${attachTarget.name}" to Campaign` : ''}
+      >
+        <form onSubmit={handleAttach} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Campaign</label>
+            <Select
+              value={attachForm.campaignId}
+              onChange={(e) => setAttachForm(f => ({ ...f, campaignId: e.target.value }))}
+              required
+            >
+              <option value="">Select a campaign…</option>
+              {campaigns.map(c => (
+                <option key={c.id} value={c.id}>{c.name} ({c.platform})</option>
+              ))}
+            </Select>
+            {campaigns.length === 0 && (
+              <p className="text-xs text-amber-600 mt-1">No campaigns yet. Create one on the Campaigns page first.</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Ad Name</label>
+            <Input value={attachForm.name} onChange={e => setAttachForm(f => ({ ...f, name: e.target.value }))} required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Headline</label>
+            <Input value={attachForm.headline} onChange={e => setAttachForm(f => ({ ...f, headline: e.target.value }))} placeholder="Main ad headline" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Description</label>
+            <Input value={attachForm.description} onChange={e => setAttachForm(f => ({ ...f, description: e.target.value }))} placeholder="Short description" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">CTA</label>
+              <Input value={attachForm.callToAction} onChange={e => setAttachForm(f => ({ ...f, callToAction: e.target.value }))} placeholder="Learn More, Shop Now…" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Destination URL</label>
+              <Input type="url" value={attachForm.destinationUrl} onChange={e => setAttachForm(f => ({ ...f, destinationUrl: e.target.value }))} placeholder="https://…" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="outline" onClick={closeAttach}>Cancel</Button>
+            <Button type="submit" disabled={attaching || campaigns.length === 0}>
+              {attaching ? 'Attaching…' : 'Attach'}
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   )
