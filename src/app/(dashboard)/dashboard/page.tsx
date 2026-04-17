@@ -5,6 +5,7 @@ import { StatCard } from '@/components/layout/stat-card'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { TrendChart, type TrendSeries } from '@/components/ui/trend-chart'
 import { formatCurrency, formatNumber, api } from '@/lib/utils'
 
 interface Report {
@@ -66,6 +67,31 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const PLATFORM_COLORS: Record<string, string> = {
+    google: '#3b82f6',
+    meta: '#8b5cf6',
+    tiktok: '#111827',
+    appsflyer: '#f59e0b',
+    adjust: '#10b981',
+  }
+
+  function buildTrendSeries(metric: 'spend' | 'clicks' | 'conversions'): TrendSeries[] {
+    // Group reports by platform, then by YYYY-MM-DD
+    const byPlatform: Record<string, Record<string, number>> = {}
+    for (const r of reports) {
+      const day = r.date.split('T')[0]
+      if (!byPlatform[r.platform]) byPlatform[r.platform] = {}
+      byPlatform[r.platform][day] = (byPlatform[r.platform][day] || 0) + (r[metric] || 0)
+    }
+    return Object.entries(byPlatform).map(([platform, byDay]) => ({
+      name: platform.charAt(0).toUpperCase() + platform.slice(1),
+      color: PLATFORM_COLORS[platform] || '#6b7280',
+      points: Object.entries(byDay)
+        .map(([x, y]) => ({ x, y }))
+        .sort((a, b) => a.x.localeCompare(b.x)),
+    }))
   }
 
   const totalSpend = reports.reduce((s, r) => s + (r.spend || 0), 0)
@@ -180,6 +206,20 @@ export default function DashboardPage() {
             </Card>
           )}
 
+          {reports.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Spend by Platform (last 7 days)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <TrendChart
+                  series={buildTrendSeries('spend')}
+                  formatY={(n) => formatCurrency(n)}
+                />
+              </CardContent>
+            </Card>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
@@ -216,18 +256,23 @@ export default function DashboardPage() {
                 <CardTitle>Platform Breakdown</CardTitle>
               </CardHeader>
               <CardContent>
-                {['google', 'meta', 'tiktok'].map((platform) => {
-                  const platformReports = reports.filter(r => r.platform === platform)
+                {[
+                  { id: 'google',    label: 'Google Ads',     icon: '🔵' },
+                  { id: 'meta',      label: 'Meta (Facebook)', icon: '🟣' },
+                  { id: 'tiktok',    label: 'TikTok',          icon: '⬛' },
+                  { id: 'appsflyer', label: 'AppsFlyer',       icon: '📱' },
+                  { id: 'adjust',    label: 'Adjust',          icon: '📐' },
+                ].map(({ id, label, icon }) => {
+                  const platformReports = reports.filter(r => r.platform === id)
+                  if (platformReports.length === 0) return null
                   const spend = platformReports.reduce((s, r) => s + (r.spend || 0), 0)
                   const clicks = platformReports.reduce((s, r) => s + (r.clicks || 0), 0)
                   const conversions = platformReports.reduce((s, r) => s + (r.conversions || 0), 0)
                   return (
-                    <div key={platform} className="flex items-center justify-between py-3 border-b last:border-0">
+                    <div key={id} className="flex items-center justify-between py-3 border-b last:border-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-lg">
-                          {platform === 'google' ? '🔵' : platform === 'meta' ? '🟣' : '⬛'}
-                        </span>
-                        <span className="font-medium capitalize text-sm">{platform === 'meta' ? 'Meta (Facebook)' : platform === 'tiktok' ? 'TikTok' : 'Google Ads'}</span>
+                        <span className="text-lg">{icon}</span>
+                        <span className="font-medium text-sm">{label}</span>
                       </div>
                       <div className="text-right text-sm">
                         <p>{formatCurrency(spend)} spent</p>
