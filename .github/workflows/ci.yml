@@ -23,7 +23,11 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        # Using `npm install` (not `npm ci`) because @auth/core and
+        # next-auth pull in mismatched peer versions of preact that
+        # confuse npm ci's strict verification. npm install resolves
+        # them the same way locally.
+        run: npm install --no-audit --no-fund
 
       - name: Generate Prisma client
         # Prisma 7 requires `prisma generate` before tsc/next sees the types.
