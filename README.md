@@ -6,12 +6,15 @@ Built on Next.js 16 with the App Router, deployed on Google Cloud Run with Cloud
 
 ## Features
 
-- **Multi-platform ad account auth** — OAuth2 connect for Google Ads (MCC supported), with PlatformAuth abstraction ready for Meta / TikTok / etc.
-- **Performance dashboard** — Sync Data pulls from external ad APIs into Postgres; the dashboard reads from the DB so transient API failures never crash the UI.
-- **AI creative generation** — Seedance2 (doubao-seedance-2-0) integration for text2video and image2video, with per-task progress tracking and elapsed-time display.
-- **Asset library** — Upload images / video / audio directly to Google Cloud Storage; assets are referenced via signed public URLs.
-- **Google Drive sync** — Optional folder ingestion into the asset library.
-- **Cookie-based auth** — Lightweight session model; users own their PlatformAuth records.
+- **Multi-platform ad account auth** — OAuth2 for Google Ads (MCC supported), token-based config for Meta, TikTok, AppsFlyer, Adjust
+- **Unified performance sync** — One "Sync Data" button pulls metrics from Google Ads, Meta, TikTok, AppsFlyer and Adjust into Postgres; dashboard always reads from DB so transient API failures never crash the UI
+- **7-day trend chart** — Dependency-free SVG line chart with spend-by-platform overlay
+- **AI Advisor** — Powered by Claude (Anthropic API) when `ANTHROPIC_API_KEY` is set; falls back to rule-based recommendations otherwise (low ROAS, low CTR, high CPA, scale opportunities)
+- **AI creative generation** — Seedance2 (doubao-seedance-2-0) for text2video/image2video, plus `/api/creatives/generate-copy` for LLM-written headline/description/CTA variants
+- **Campaign + Creative + Budget CRUD** — Edit, pause/resume, delete; attach creatives to campaigns (auto-creates default ad group)
+- **Asset library** — Upload to Google Cloud Storage, folder browsing, multi-select with bulk delete/tag, Google Drive sync
+- **Daily digest email** — Nightly performance summary via SMTP (nodemailer); optional LLM-generated executive summary
+- **Signed session cookies** — HMAC-SHA256 session tokens with TTL; server-side auth guard on dashboard routes
 
 ## Tech Stack
 
@@ -96,6 +99,17 @@ prisma/
 - Don't commit `.env`. The repo's `.env.example` documents every variable.
 - OAuth tokens are stored in the `PlatformAuth` table (per user, per platform). Refresh tokens are kept; the callback flow forces `prompt=consent` so a refresh token is always issued.
 - Hardcoded keys / URLs have been scrubbed — all secrets come from environment.
+
+## Continuous Integration
+
+Every push and PR to `main` runs a GitHub Actions workflow that:
+
+1. installs dependencies with `npm ci`
+2. runs `prisma generate`
+3. runs `eslint` + `tsc --noEmit`
+4. runs `next build` to catch runtime-level regressions
+
+See `.github/workflows/ci.yml`.
 
 ## License
 
