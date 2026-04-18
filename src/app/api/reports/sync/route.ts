@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 import { GoogleAdsClient } from '@/lib/platforms/google'
 import { MetaAdsClient } from '@/lib/platforms/meta'
 import { TikTokAdsClient } from '@/lib/platforms/tiktok'
@@ -40,6 +40,7 @@ function derived(m: SyncMetrics) {
 }
 
 async function upsertReport(
+  orgId: string,
   userId: string,
   platform: string,
   date: Date,
@@ -47,7 +48,7 @@ async function upsertReport(
   raw: unknown
 ) {
   const endDateStr = date.toISOString().split('T')[0]
-  const reportId = `${platform}-${userId}-${endDateStr}`
+  const reportId = `${platform}-${orgId}-${endDateStr}`
   const d = derived(metrics)
 
   await prisma.report.upsert({
@@ -64,6 +65,7 @@ async function upsertReport(
     },
     create: {
       id: reportId,
+      orgId,
       userId,
       platform,
       date,
@@ -83,6 +85,7 @@ async function upsertReport(
 
 async function syncGoogle(
   auth: PlatformAuth,
+  orgId: string,
   userId: string,
   startDate: string,
   endDate: string,
@@ -137,7 +140,7 @@ async function syncGoogle(
     }
   }
 
-  await upsertReport(userId, 'google', today, metrics, {
+  await upsertReport(orgId, userId, 'google', today, metrics, {
     customerIds: nonManagerIds,
     startDate,
     endDate,
@@ -148,6 +151,7 @@ async function syncGoogle(
 
 async function syncMeta(
   auth: PlatformAuth,
+  orgId: string,
   userId: string,
   startDate: string,
   endDate: string,
@@ -201,12 +205,13 @@ async function syncMeta(
     }
   }
 
-  await upsertReport(userId, 'meta', today, metrics, { rows: rows.length, startDate, endDate })
+  await upsertReport(orgId, userId, 'meta', today, metrics, { rows: rows.length, startDate, endDate })
   return { success: true, rows: rows.length, ...metrics }
 }
 
 async function syncTikTok(
   auth: PlatformAuth,
+  orgId: string,
   userId: string,
   startDate: string,
   endDate: string,
@@ -239,7 +244,7 @@ async function syncTikTok(
     metrics.conversions += num(m.conversion)
   }
 
-  await upsertReport(userId, 'tiktok', today, metrics, {
+  await upsertReport(orgId, userId, 'tiktok', today, metrics, {
     rows: list.length,
     startDate,
     endDate,
@@ -249,6 +254,7 @@ async function syncTikTok(
 
 async function syncAppsFlyer(
   auth: PlatformAuth,
+  orgId: string,
   userId: string,
   startDate: string,
   endDate: string,
@@ -280,7 +286,7 @@ async function syncAppsFlyer(
   // Conversions on install side = installs
   metrics.conversions = metrics.installs
 
-  await upsertReport(userId, 'appsflyer', today, metrics, {
+  await upsertReport(orgId, userId, 'appsflyer', today, metrics, {
     rows: data.length,
     startDate,
     endDate,
@@ -290,6 +296,7 @@ async function syncAppsFlyer(
 
 async function syncAdjust(
   auth: PlatformAuth,
+  orgId: string,
   userId: string,
   startDate: string,
   endDate: string,
@@ -325,7 +332,7 @@ async function syncAdjust(
   }
   metrics.conversions = metrics.installs
 
-  await upsertReport(userId, 'adjust', today, metrics, {
+  await upsertReport(orgId, userId, 'adjust', today, metrics, {
     rows: rows.length,
     startDate,
     endDate,
@@ -336,9 +343,11 @@ async function syncAdjust(
 // ---------------- Main handler ----------------
 
 export async function POST() {
-  let user
+  let user, org
   try {
-    user = await requireAuth()
+    const ctx = await requireAuthWithOrg()
+    user = ctx.user
+    org = ctx.org
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -351,7 +360,7 @@ export async function POST() {
 
   try {
     const auths = await prisma.platformAuth.findMany({
-      where: { userId: user.id, isActive: true },
+      where: { orgId: org.id, isActive: true },
     })
 
     if (auths.length === 0) {
@@ -366,19 +375,19 @@ export async function POST() {
       try {
         switch (auth.platform) {
           case 'google':
-            results.google = await syncGoogle(auth, user.id, startDate, endDate, today)
+            results.google = await syncGoogle(auth, org.id, user.id, startDate, endDate, today)
             break
           case 'meta':
-            results.meta = await syncMeta(auth, user.id, startDate, endDate, today)
+            results.meta = await syncMeta(auth, org.id, user.id, startDate, endDate, today)
             break
           case 'tiktok':
-            results.tiktok = await syncTikTok(auth, user.id, startDate, endDate, today)
+            results.tiktok = await syncTikTok(auth, org.id, user.id, startDate, endDate, today)
             break
           case 'appsflyer':
-            results.appsflyer = await syncAppsFlyer(auth, user.id, startDate, endDate, today)
+            results.appsflyer = await syncAppsFlyer(auth, org.id, user.id, startDate, endDate, today)
             break
           case 'adjust':
-            results.adjust = await syncAdjust(auth, user.id, startDate, endDate, today)
+            results.adjust = await syncAdjust(auth, org.id, user.id, startDate, endDate, today)
             break
           default:
             // Skip creative-only platforms (seedream, seedance, seedance2, etc.)

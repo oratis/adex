@@ -88,6 +88,42 @@ const en: Dict = {
   'auth.reset_password': 'Reset password',
   'auth.new_password': 'New password',
   'auth.confirm_password': 'Confirm password',
+
+  // Campaigns
+  'campaign.new': '+ New Campaign',
+  'campaign.empty': 'No campaigns yet. Create your first campaign to start advertising.',
+  'campaign.launch_confirm': 'Launch this campaign to the ad platform?',
+
+  // Advisor
+  'advisor.refresh': 'Refresh Advice',
+  'advisor.refreshing': 'Refreshing…',
+  'advisor.recommendations': 'Recommendations',
+  'advisor.pause_campaign': '⏸ Pause Campaign',
+  'advisor.resume_campaign': '▶ Resume Campaign',
+  'advisor.applying': 'Applying…',
+
+  // Settings tabs
+  'settings.tab.platforms': 'Platform Auth',
+  'settings.tab.profile': 'Profile & Notifications',
+  'settings.tab.members': 'Team',
+  'settings.tab.account': 'Account',
+
+  // Team
+  'team.members': 'Members',
+  'team.invite_heading': 'Invite a teammate',
+  'team.send_invite': 'Send Invite',
+  'team.sending': 'Sending…',
+  'team.create_workspace': 'Create a new workspace',
+  'team.pending_invites': 'Pending invites',
+  'team.revoke': 'Revoke',
+  'team.role.owner': 'Owner',
+  'team.role.admin': 'Admin',
+  'team.role.member': 'Member',
+
+  // Workspace switcher
+  'workspace.label': 'Workspace',
+  'workspace.manage_members': 'Manage members',
+  'workspace.create_new': '+ Create workspace',
 }
 
 const zh: Dict = {
@@ -161,6 +197,42 @@ const zh: Dict = {
   'auth.reset_password': '重置密码',
   'auth.new_password': '新密码',
   'auth.confirm_password': '确认密码',
+
+  // Campaigns
+  'campaign.new': '+ 新建广告系列',
+  'campaign.empty': '还没有广告系列，创建第一个开始投放吧。',
+  'campaign.launch_confirm': '将该广告系列发布到广告平台？',
+
+  // Advisor
+  'advisor.refresh': '刷新建议',
+  'advisor.refreshing': '刷新中…',
+  'advisor.recommendations': '优化建议',
+  'advisor.pause_campaign': '⏸ 暂停系列',
+  'advisor.resume_campaign': '▶ 恢复系列',
+  'advisor.applying': '执行中…',
+
+  // Settings tabs
+  'settings.tab.platforms': '平台授权',
+  'settings.tab.profile': '个人资料 & 通知',
+  'settings.tab.members': '团队成员',
+  'settings.tab.account': '账号',
+
+  // Team
+  'team.members': '成员',
+  'team.invite_heading': '邀请队友',
+  'team.send_invite': '发送邀请',
+  'team.sending': '发送中…',
+  'team.create_workspace': '创建新工作区',
+  'team.pending_invites': '待处理邀请',
+  'team.revoke': '撤销',
+  'team.role.owner': '所有者',
+  'team.role.admin': '管理员',
+  'team.role.member': '成员',
+
+  // Workspace switcher
+  'workspace.label': '工作区',
+  'workspace.manage_members': '管理成员',
+  'workspace.create_new': '+ 创建工作区',
 }
 
 const DICT: Record<Locale, Dict> = { en, zh }

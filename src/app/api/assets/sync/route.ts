@@ -1,12 +1,20 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { requireAuthWithOrg } from '@/lib/auth'
 import { GoogleDriveClient, DriveFile } from '@/lib/platforms/gdrive'
 
-// Google Drive folder ID and API key
-const DRIVE_FOLDER_ID = process.env.GDRIVE_FOLDER_ID || '1FxJ5W6eCqVbw5VT_Jfu1VAZ4v_Jdvu9V'
+const DRIVE_FOLDER_ID = process.env.GDRIVE_FOLDER_ID || ''
 const GDRIVE_API_KEY = process.env.GDRIVE_API_KEY || ''
 
 export async function POST() {
+  let org
+  try {
+    const ctx = await requireAuthWithOrg()
+    org = ctx.org
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   try {
     if (!GDRIVE_API_KEY) {
       return NextResponse.json({
@@ -14,12 +22,16 @@ export async function POST() {
         hint: 'Create a Google Cloud API key and set GDRIVE_API_KEY environment variable',
       }, { status: 400 })
     }
+    if (!DRIVE_FOLDER_ID) {
+      return NextResponse.json({
+        error: 'GDRIVE_FOLDER_ID not configured',
+      }, { status: 400 })
+    }
 
     const client = new GoogleDriveClient(GDRIVE_API_KEY)
     const stats = { synced: 0, skipped: 0, folders: 0, total: 0 }
 
-    // Recursively sync the folder tree
-    await syncFolder(client, DRIVE_FOLDER_ID, null, '', stats)
+    await syncFolder(client, org.id, DRIVE_FOLDER_ID, null, '', stats)
 
     return NextResponse.json({
       success: true,
@@ -34,6 +46,7 @@ export async function POST() {
 
 async function syncFolder(
   client: GoogleDriveClient,
+  orgId: string,
   driveFolderId: string,
   parentAssetId: string | null,
   pathPrefix: string,
@@ -47,42 +60,34 @@ async function syncFolder(
     const currentPath = pathPrefix ? `${pathPrefix}/${item.name}` : item.name
 
     if (isFolder) {
-      // Create or find the folder asset
-      const folderAsset = await upsertFolderAsset(item, parentAssetId, currentPath)
+      const folderAsset = await upsertFolderAsset(orgId, item, parentAssetId, currentPath)
       stats.folders++
-      // Recurse into subfolder
-      await syncFolder(client, item.id, folderAsset.id, currentPath, stats)
+      await syncFolder(client, orgId, item.id, folderAsset.id, currentPath, stats)
       continue
     }
 
-    // Skip non-asset files
     if (!GoogleDriveClient.isSupportedAsset(item.mimeType)) {
       stats.skipped++
       continue
     }
 
-    // Sync file asset
-    const wasCreated = await upsertFileAsset(client, item, parentAssetId, currentPath)
-    if (wasCreated) {
-      stats.synced++
-    } else {
-      stats.skipped++
-    }
+    const wasCreated = await upsertFileAsset(client, orgId, item, parentAssetId, currentPath)
+    if (wasCreated) stats.synced++
+    else stats.skipped++
   }
 }
 
 async function upsertFolderAsset(
+  orgId: string,
   file: DriveFile,
   parentId: string | null,
   folderPath: string
 ) {
-  // Check if folder already exists by driveFileId
   const existing = await prisma.asset.findFirst({
-    where: { driveFileId: file.id, source: 'gdrive' },
+    where: { driveFileId: file.id, source: 'gdrive', orgId },
   })
 
   if (existing) {
-    // Update name/path if changed
     await prisma.asset.update({
       where: { id: existing.id },
       data: { name: file.name, folderPath, parentId },
@@ -92,6 +97,7 @@ async function upsertFolderAsset(
 
   return prisma.asset.create({
     data: {
+      orgId,
       uploadedBy: 'gdrive-sync',
       uploaderName: 'Google Drive',
       name: file.name,
@@ -109,17 +115,16 @@ async function upsertFolderAsset(
 
 async function upsertFileAsset(
   client: GoogleDriveClient,
+  orgId: string,
   file: DriveFile,
   parentId: string | null,
   folderPath: string
 ): Promise<boolean> {
-  // Check if already synced by driveFileId
   const existing = await prisma.asset.findFirst({
-    where: { driveFileId: file.id, source: 'gdrive' },
+    where: { driveFileId: file.id, source: 'gdrive', orgId },
   })
 
   if (existing) {
-    // Update if modified
     if (new Date(file.modifiedTime) > new Date(existing.updatedAt)) {
       await prisma.asset.update({
         where: { id: existing.id },
@@ -140,6 +145,7 @@ async function upsertFileAsset(
   const isVideo = GoogleDriveClient.isVideo(file.mimeType)
   await prisma.asset.create({
     data: {
+      orgId,
       uploadedBy: 'gdrive-sync',
       uploaderName: 'Google Drive',
       name: file.name,
@@ -161,13 +167,24 @@ async function upsertFileAsset(
   return true
 }
 
-// GET: Check sync status
 export async function GET() {
+  let org
   try {
-    const driveAssets = await prisma.asset.count({ where: { source: 'gdrive', isFolder: false } })
-    const driveFolders = await prisma.asset.count({ where: { source: 'gdrive', isFolder: true } })
+    const ctx = await requireAuthWithOrg()
+    org = ctx.org
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  try {
+    const driveAssets = await prisma.asset.count({
+      where: { orgId: org.id, source: 'gdrive', isFolder: false },
+    })
+    const driveFolders = await prisma.asset.count({
+      where: { orgId: org.id, source: 'gdrive', isFolder: true },
+    })
     const latestSync = await prisma.asset.findFirst({
-      where: { source: 'gdrive' },
+      where: { orgId: org.id, source: 'gdrive' },
       orderBy: { updatedAt: 'desc' },
       select: { updatedAt: true },
     })

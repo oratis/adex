@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 
-async function verifyOwnership(adId: string, userId: string) {
+async function verifyOrgOwnership(adId: string, orgId: string) {
   const ad = await prisma.ad.findUnique({
     where: { id: adId },
     include: { adGroup: { include: { campaign: true } } },
   })
   if (!ad) return null
-  if (ad.adGroup.campaign.userId !== userId) return null
+  if (ad.adGroup.campaign.orgId !== orgId) return null
   return ad
 }
 
@@ -17,11 +17,11 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
     const data = await req.json()
 
-    const ad = await verifyOwnership(id, user.id)
+    const ad = await verifyOrgOwnership(id, org.id)
     if (!ad) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     const updateData: Record<string, unknown> = {}
@@ -47,9 +47,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
-    const ad = await verifyOwnership(id, user.id)
+    const ad = await verifyOrgOwnership(id, org.id)
     if (!ad) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     await prisma.ad.delete({ where: { id } })

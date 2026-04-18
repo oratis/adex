@@ -5,6 +5,7 @@ import {
   signSessionToken,
   SESSION_COOKIE,
   SESSION_MAX_AGE,
+  ensurePersonalOrg,
 } from '@/lib/auth'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
@@ -43,6 +44,9 @@ export async function POST(req: NextRequest) {
         name: name.trim(),
       },
     })
+
+    // Every user gets a personal workspace on sign-up
+    await ensurePersonalOrg(user)
 
     const token = signSessionToken(user.id, SESSION_MAX_AGE)
     const response = NextResponse.json({ id: user.id, email: user.email, name: user.name })

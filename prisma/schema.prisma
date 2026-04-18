@@ -21,11 +21,65 @@ model User {
   creatives     Creative[]
   reports       Report[]
   budgets       Budget[]
+  memberships   OrgMembership[]
+}
+
+// A workspace / team. Resources (Campaign, Creative, Budget, Report,
+// PlatformAuth, Asset) belong to an org. Every user has at least one
+// personal org auto-created on registration.
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members       OrgMembership[]
+  invites       OrgInvite[]
+  campaigns     Campaign[]
+  creatives     Creative[]
+  budgets       Budget[]
+  reports       Report[]
+  platformAuths PlatformAuth[]
+  assets        Asset[]
+}
+
+model OrgMembership {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String
+  role      String   // owner, admin, member
+  createdAt DateTime @default(now())
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+  @@index([userId])
+}
+
+model OrgInvite {
+  id         String    @id @default(cuid())
+  orgId      String
+  email      String
+  role       String    @default("member")
+  tokenHash  String    @unique     // SHA-256 of the raw invite token
+  invitedBy  String
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([email])
 }
 
 model PlatformAuth {
   id           String   @id @default(cuid())
-  userId       String
+  orgId        String
+  userId       String   // creator; retained for audit
   platform     String   // google, meta, tiktok, appsflyer, adjust, seedream, seedance
   accountId    String?
   accessToken  String?
@@ -38,14 +92,17 @@ model PlatformAuth {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, platform])
+  @@unique([orgId, platform])
+  @@index([userId])
 }
 
 model Campaign {
   id              String   @id @default(cuid())
-  userId          String
+  orgId           String
+  userId          String   // creator
   name            String
   platform        String   // google, meta, tiktok
   status          String   @default("draft") // draft, active, paused, completed
@@ -62,10 +119,14 @@ model Campaign {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   adGroups  AdGroup[]
   budgets   Budget[]
   reports   Report[]
+
+  @@index([orgId])
+  @@index([userId])
 }
 
 model AdGroup {
@@ -101,7 +162,8 @@ model Ad {
 
 model Creative {
   id          String   @id @default(cuid())
-  userId      String
+  orgId       String
+  userId      String   // creator
   name        String
   type        String   // image, video
   source      String   // upload, seedream, seedance
@@ -115,13 +177,18 @@ model Creative {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   ads  Ad[]
+
+  @@index([orgId])
+  @@index([userId])
 }
 
 model Budget {
   id          String   @id @default(cuid())
-  userId      String
+  orgId       String
+  userId      String   // creator
   campaignId  String?
   type        String   // daily, lifetime
   amount      Float
@@ -132,13 +199,18 @@ model Budget {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  campaign Campaign? @relation(fields: [campaignId], references: [id])
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign Campaign?    @relation(fields: [campaignId], references: [id])
+
+  @@index([orgId])
+  @@index([userId])
 }
 
 model Report {
   id          String   @id @default(cuid())
-  userId      String
+  orgId       String
+  userId      String   // creator of the sync
   campaignId  String?
   platform    String   // google, meta, tiktok, appsflyer, adjust
   date        DateTime
@@ -155,8 +227,12 @@ model Report {
   rawData     String?  // JSON string of full API response
   createdAt   DateTime @default(now())
 
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  campaign Campaign? @relation(fields: [campaignId], references: [id])
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign Campaign?    @relation(fields: [campaignId], references: [id])
+
+  @@index([orgId])
+  @@index([userId])
 }
 
 model DailyDigest {
@@ -182,6 +258,7 @@ model PasswordResetToken {
 
 model Asset {
   id            String   @id @default(cuid())
+  orgId         String
   uploadedBy    String   // userId who contributed
   uploaderName  String?  // display name
   name          String
@@ -206,6 +283,9 @@ model Asset {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   parent   Asset?  @relation("AssetTree", fields: [parentId], references: [id])
   children Asset[] @relation("AssetTree")
+
+  @@index([orgId])
 }

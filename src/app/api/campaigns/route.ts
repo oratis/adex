@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 
 export async function GET() {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const campaigns = await prisma.campaign.findMany({
-      where: { userId: user.id },
+      where: { orgId: org.id },
       include: { budgets: true, adGroups: { include: { ads: true } } },
       orderBy: { createdAt: 'desc' },
     })
@@ -18,11 +18,12 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth()
+    const { user, org } = await requireAuthWithOrg()
     const data = await req.json()
 
     const campaign = await prisma.campaign.create({
       data: {
+        orgId: org.id,
         userId: user.id,
         name: data.name,
         platform: data.platform,
@@ -39,7 +40,8 @@ export async function POST(req: NextRequest) {
     })
 
     return NextResponse.json(campaign)
-  } catch {
-    return NextResponse.json({ error: 'Failed to create campaign' }, { status: 500 })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to create campaign'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

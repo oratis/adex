@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg, assertRole } from '@/lib/auth'
 import { deleteFromGCS } from '@/lib/storage'
 
 // POST /api/assets/bulk — { action: 'delete' | 'tag', ids: string[], tags?: string }
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth()
+    const { user, org, role } = await requireAuthWithOrg()
     const { action, ids, tags } = (await req.json()) as {
       action: 'delete' | 'tag'
       ids?: string[]
@@ -17,22 +17,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'ids array required' }, { status: 400 })
     }
 
-    // Only the uploader can modify their own assets.
-    const owned = await prisma.asset.findMany({
-      where: { id: { in: ids }, uploadedBy: user.id },
-    })
+    // Scope to current org. Non-admin members can only modify what they
+    // uploaded; admins/owners can modify any org asset.
+    const isAdmin = (() => {
+      try { assertRole(role, 'admin'); return true } catch { return false }
+    })()
+
+    const targetFilter: Record<string, unknown> = {
+      id: { in: ids },
+      orgId: org.id,
+    }
+    if (!isAdmin) targetFilter.uploadedBy = user.id
+
+    const owned = await prisma.asset.findMany({ where: targetFilter })
     const ownedIds = owned.map((a) => a.id)
     const skipped = ids.length - ownedIds.length
 
     if (ownedIds.length === 0) {
       return NextResponse.json(
-        { error: 'No assets owned by current user in selection', skipped },
+        { error: 'No assets in the current org you are allowed to modify', skipped },
         { status: 403 }
       )
     }
 
     if (action === 'delete') {
-      // Best-effort GCS cleanup
       await Promise.all(
         owned
           .filter((a) => a.fileUrl?.startsWith('https://storage.googleapis.com/'))

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
     const data = await req.json()
 
@@ -22,7 +22,7 @@ export async function PUT(
       updateData.endDate = data.endDate ? new Date(data.endDate) : null
 
     const result = await prisma.budget.updateMany({
-      where: { id, userId: user.id },
+      where: { id, orgId: org.id },
       data: updateData,
     })
 
@@ -46,10 +46,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
     const result = await prisma.budget.deleteMany({
-      where: { id, userId: user.id },
+      where: { id, orgId: org.id },
     })
     if (result.count === 0) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })

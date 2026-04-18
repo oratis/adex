@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { Sidebar } from '@/components/layout/sidebar'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentUser, getCurrentOrg, ensurePersonalOrg } from '@/lib/auth'
 import { ToastProvider } from '@/components/ui/toast'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -9,10 +9,21 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect('/login')
   }
 
+  // Safety net: legacy users without any org get one auto-created
+  let ctx = await getCurrentOrg(user.id)
+  if (!ctx) {
+    await ensurePersonalOrg(user)
+    ctx = await getCurrentOrg(user.id)
+  }
+
   return (
     <ToastProvider>
       <div className="flex min-h-screen bg-gray-50">
-        <Sidebar userName={user.name || user.email} />
+        <Sidebar
+          userName={user.name || user.email}
+          orgName={ctx?.org.name}
+          orgRole={ctx?.role}
+        />
         <main className="flex-1 p-8 overflow-auto">
           {children}
         </main>

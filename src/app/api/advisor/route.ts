@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 import { completeJSON, isLLMConfigured } from '@/lib/llm'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+
+type AppliableAction =
+  | { type: 'pause_campaign'; campaignId: string }
+  | { type: 'resume_campaign'; campaignId: string }
 
 type Advice = {
   title: string
   description: string
   severity: 'info' | 'warning' | 'opportunity' | 'alert'
   recommendedAction?: string
+  action?: AppliableAction
 }
 
 type AdvisorResponse = {
@@ -93,9 +98,11 @@ function ruleBasedAdvice(params: {
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  let user
+  let user, org
   try {
-    user = await requireAuth()
+    const ctx = await requireAuthWithOrg()
+    user = ctx.user
+    org = ctx.org
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -113,11 +120,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     const [reports, campaigns] = await Promise.all([
       prisma.report.findMany({
-        where: { userId: user.id, date: { gte: since } },
+        where: { orgId: org.id, date: { gte: since } },
         orderBy: { date: 'asc' },
       }),
       prisma.campaign.findMany({
-        where: { userId: user.id },
+        where: { orgId: org.id },
         include: { budgets: true },
       }),
     ])
@@ -148,6 +155,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           days: 7,
           platforms: reportsByPlatform,
           campaigns: campaigns.map((c) => ({
+            id: c.id,
             name: c.name,
             platform: c.platform,
             status: c.status,
@@ -156,15 +164,32 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           })),
         }
 
-        const prompt = `You are a senior paid-ads strategist. Review this advertiser's last 7 days of performance and produce 3–6 prioritized recommendations. For each, give a short actionable title, a 1–2 sentence description, a severity (one of: alert, warning, opportunity, info), and a recommendedAction if appropriate.
+        const prompt = `You are a senior paid-ads strategist. Review this advertiser's last 7 days of performance and produce 3–6 prioritized recommendations.
+
+For each recommendation:
+- title: short actionable phrase
+- description: 1-2 sentences explaining why, citing numbers from the data
+- severity: one of alert, warning, opportunity, info
+- recommendedAction: human-readable next step (optional)
+- action (optional): a one-click automated action, ONLY for low-risk reversible ops. Must be one of:
+  { "type": "pause_campaign", "campaignId": "<id>" } — only if the campaign.status is "active" AND there's a clear case to pause (e.g. ROAS below 0.5)
+  { "type": "resume_campaign", "campaignId": "<id>" } — only if status is "paused" AND metrics suggest resuming
+- DO NOT output an action unless you're confident. Default to recommendedAction text instead.
+- NEVER suggest launching new campaigns or changing budgets as an action (those still require human approval).
 
 Performance summary (JSON):
 ${JSON.stringify(summary, null, 2)}
 
-Return a JSON object of shape:
+Return JSON:
 {
   "advice": [
-    { "title": "...", "description": "...", "severity": "alert|warning|opportunity|info", "recommendedAction": "..." }
+    {
+      "title": "...",
+      "description": "...",
+      "severity": "alert|warning|opportunity|info",
+      "recommendedAction": "...",
+      "action": { "type": "pause_campaign", "campaignId": "..." }
+    }
   ]
 }`
 
@@ -174,8 +199,24 @@ Return a JSON object of shape:
         })
 
         if (Array.isArray(result.advice) && result.advice.length > 0) {
+          // Validate actions: campaignId must belong to the current org,
+          // and the type must be one we actually support.
+          const validCampaignIds = new Set(campaigns.map((c) => c.id))
+          const sanitized = result.advice.map((a) => {
+            if (!a.action) return a
+            const t = a.action.type
+            if (
+              (t !== 'pause_campaign' && t !== 'resume_campaign') ||
+              !validCampaignIds.has(a.action.campaignId)
+            ) {
+              // Drop the action but keep the advice text
+              const { action: _drop, ...rest } = a
+              return rest
+            }
+            return a
+          })
           const resp: AdvisorResponse = {
-            advice: result.advice,
+            advice: sanitized,
             source: 'llm',
             model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5',
           }

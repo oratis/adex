@@ -44,7 +44,22 @@ export async function DELETE(req: NextRequest) {
       )
     }
 
-    // Clean up auth tokens first, then the user (cascades)
+    // Delete orgs where this user is the sole owner (cascades to all
+    // org resources — campaigns, reports, etc). For shared orgs, remove
+    // just the membership.
+    const memberships = await prisma.orgMembership.findMany({
+      where: { userId: user.id },
+      include: { org: { include: { members: { where: { role: 'owner' } } } } },
+    })
+    for (const m of memberships) {
+      const ownerCount = m.org.members.length
+      if (m.role === 'owner' && ownerCount <= 1) {
+        // Sole owner → delete the whole org
+        await prisma.organization.delete({ where: { id: m.orgId } })
+      }
+    }
+
+    // Clean up auth tokens first, then the user (cascades remaining)
     await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } })
     await prisma.user.delete({ where: { id: user.id } })
 

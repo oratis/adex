@@ -1,23 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 import { GoogleAdsClient } from '@/lib/platforms/google'
 import { MetaAdsClient } from '@/lib/platforms/meta'
 import { TikTokAdsClient } from '@/lib/platforms/tiktok'
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
 
     const campaign = await prisma.campaign.findFirst({
-      where: { id, userId: user.id },
+      where: { id, orgId: org.id },
       include: { budgets: true, adGroups: { include: { ads: { include: { creative: true } } } } },
     })
     if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
     const auth = await prisma.platformAuth.findFirst({
-      where: { userId: user.id, platform: campaign.platform, isActive: true },
+      where: { orgId: org.id, platform: campaign.platform, isActive: true },
     })
     if (!auth) return NextResponse.json({ error: `No ${campaign.platform} authorization found` }, { status: 400 })
 

@@ -1,37 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getCurrentUser } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 import { uploadToGCS } from '@/lib/storage'
 
-// GET: List all shared assets (requires authentication)
+// GET: List org-scoped assets.
 export async function GET(req: NextRequest) {
+  let org
   try {
-    const user = await getCurrentUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const ctx = await requireAuthWithOrg()
+    org = ctx.org
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
+  try {
     const searchParams = req.nextUrl.searchParams
-    const type = searchParams.get('type') // image, video, folder
-    const source = searchParams.get('source') // upload, seedance2, seedream, gdrive
-    const status = searchParams.get('status') // ready, generating, failed
+    const type = searchParams.get('type')
+    const source = searchParams.get('source')
+    const status = searchParams.get('status')
     const search = searchParams.get('search')
-    const parentId = searchParams.get('parentId') // for folder browsing
-    const folderId = searchParams.get('folderId') // alias for parentId
+    const parentId = searchParams.get('parentId')
+    const folderId = searchParams.get('folderId')
 
-    const where: Record<string, unknown> = {}
+    const where: Record<string, unknown> = { orgId: org.id }
     if (type) where.type = type
     if (source) where.source = source
     if (status) where.status = status
 
-    // Folder browsing: show children of a specific folder
     const browseParentId = parentId || folderId
-    if (browseParentId === 'root') {
-      // Show top-level items (no parent)
-      where.parentId = null
-    } else if (browseParentId) {
-      where.parentId = browseParentId
-    }
+    if (browseParentId === 'root') where.parentId = null
+    else if (browseParentId) where.parentId = browseParentId
 
     if (search) {
       where.OR = [
@@ -53,13 +51,18 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST: Upload a file to shared asset library (stored on GCS)
+// POST: Upload a file to the org's asset library (stored on GCS)
 export async function POST(req: NextRequest) {
+  let user, org
   try {
-    const user = await getCurrentUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const ctx = await requireAuthWithOrg()
+    user = ctx.user
+    org = ctx.org
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  try {
     const contentType = req.headers.get('content-type') || ''
 
     if (contentType.includes('multipart/form-data')) {
@@ -71,7 +74,6 @@ export async function POST(req: NextRequest) {
       const buffer = Buffer.from(bytes)
       const filename = `${Date.now()}-${file.name}`
 
-      // Upload to Google Cloud Storage
       const fileUrl = await uploadToGCS(buffer, filename, file.type || 'application/octet-stream')
 
       const isVideo = file.type.startsWith('video/')
@@ -79,6 +81,7 @@ export async function POST(req: NextRequest) {
 
       const asset = await prisma.asset.create({
         data: {
+          orgId: org.id,
           uploadedBy: user.id,
           uploaderName: user.name || user.email,
           name: (formData.get('name') as string) || file.name,

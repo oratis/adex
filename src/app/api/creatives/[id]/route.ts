@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 import { deleteFromGCS } from '@/lib/storage'
 
 export async function GET(
@@ -8,10 +8,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
     const creative = await prisma.creative.findFirst({
-      where: { id, userId: user.id },
+      where: { id, orgId: org.id },
     })
     if (!creative) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -28,7 +28,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
     const data = await req.json()
 
@@ -38,7 +38,7 @@ export async function PUT(
     if (data.status !== undefined) updateData.status = data.status
 
     const result = await prisma.creative.updateMany({
-      where: { id, userId: user.id },
+      where: { id, orgId: org.id },
       data: updateData,
     })
     if (result.count === 0) {
@@ -57,11 +57,11 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
 
     const creative = await prisma.creative.findFirst({
-      where: { id, userId: user.id },
+      where: { id, orgId: org.id },
     })
     if (!creative) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })

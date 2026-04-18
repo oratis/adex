@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Tabs } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/toast'
+import { MembersPanel } from '@/components/members-panel'
 import { api } from '@/lib/utils'
 
 interface PlatformAuth {
@@ -485,6 +486,11 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           ),
+        },
+        {
+          id: 'members',
+          label: 'Team',
+          content: <MembersPanel />,
         },
         {
           id: 'account',

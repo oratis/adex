@@ -106,3 +106,87 @@ export async function requireAuth() {
 
 export const SESSION_COOKIE = 'auth_token'
 export const SESSION_MAX_AGE = 60 * 60 * 24 * 30 // 30 days
+
+// ============================================================================
+// Organizations
+// ============================================================================
+
+export const ACTIVE_ORG_COOKIE = 'adex_active_org'
+
+export type OrgRole = 'owner' | 'admin' | 'member'
+
+/**
+ * Resolve the active organization for the current user.
+ * Falls back to the first membership by creation date.
+ * Ensures: the active_org_id cookie always refers to an org the user belongs to.
+ */
+export async function getCurrentOrg(userId: string) {
+  const cookieStore = await cookies()
+  const activeOrgId = cookieStore.get(ACTIVE_ORG_COOKIE)?.value
+
+  if (activeOrgId) {
+    const membership = await prisma.orgMembership.findUnique({
+      where: { orgId_userId: { orgId: activeOrgId, userId } },
+      include: { org: true },
+    })
+    if (membership) return { org: membership.org, role: membership.role as OrgRole }
+  }
+
+  // Fallback: first membership (oldest → typically personal org)
+  const membership = await prisma.orgMembership.findFirst({
+    where: { userId },
+    orderBy: { createdAt: 'asc' },
+    include: { org: true },
+  })
+  if (!membership) return null
+  return { org: membership.org, role: membership.role as OrgRole }
+}
+
+/**
+ * Return the current user AND their active org. Throws if either missing.
+ * Prefer this over requireAuth() + getCurrentOrg() everywhere possible.
+ */
+export async function requireAuthWithOrg() {
+  const user = await requireAuth()
+  const ctx = await getCurrentOrg(user.id)
+  if (!ctx) throw new Error('No organization — please sign out and back in')
+  return { user, org: ctx.org, role: ctx.role }
+}
+
+/**
+ * Helper for endpoints that need role-based access within an org.
+ * Throws if the user's role is below the required level.
+ */
+export function assertRole(userRole: OrgRole, required: OrgRole): void {
+  const order: Record<OrgRole, number> = { member: 1, admin: 2, owner: 3 }
+  if (order[userRole] < order[required]) {
+    throw new Error(`Requires ${required} role (current: ${userRole})`)
+  }
+}
+
+/**
+ * Create a personal org + OWNER membership for a newly-registered user.
+ * Idempotent: safe to call on existing users.
+ */
+export async function ensurePersonalOrg(user: { id: string; email: string; name: string | null }) {
+  const existing = await prisma.orgMembership.findFirst({
+    where: { userId: user.id },
+  })
+  if (existing) return existing.orgId
+
+  const base = (user.name || user.email.split('@')[0]).replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()
+  const slug = `ws-${base.slice(0, 20)}-${user.id.slice(0, 6)}`
+  const orgName = `${user.name || user.email.split('@')[0]}'s workspace`
+
+  const org = await prisma.organization.create({
+    data: {
+      name: orgName,
+      slug,
+      createdBy: user.id,
+      members: {
+        create: { userId: user.id, role: 'owner' },
+      },
+    },
+  })
+  return org.id
+}

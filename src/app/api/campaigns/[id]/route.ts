@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
     const campaign = await prisma.campaign.findFirst({
-      where: { id, userId: user.id },
+      where: { id, orgId: org.id },
       include: { budgets: true, adGroups: { include: { ads: { include: { creative: true } } } }, reports: true },
     })
     if (!campaign) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -19,12 +19,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
     const data = await req.json()
 
     const campaign = await prisma.campaign.updateMany({
-      where: { id, userId: user.id },
+      where: { id, orgId: org.id },
       data: {
         name: data.name,
         platform: data.platform,
@@ -49,9 +49,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { id } = await params
-    await prisma.campaign.deleteMany({ where: { id, userId: user.id } })
+    await prisma.campaign.deleteMany({ where: { id, orgId: org.id } })
     return NextResponse.json({ ok: true })
   } catch {
     return NextResponse.json({ error: 'Failed to delete' }, { status: 500 })

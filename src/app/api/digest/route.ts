@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 import { sendMail } from '@/lib/mailer'
 import { completeText, isLLMConfigured } from '@/lib/llm'
 
 export async function POST() {
   try {
-    const user = await requireAuth()
+    const { user, org } = await requireAuthWithOrg()
 
     // Last 24h of performance
     const endDate = new Date()
@@ -14,13 +14,13 @@ export async function POST() {
 
     const reports = await prisma.report.findMany({
       where: {
-        userId: user.id,
+        orgId: org.id,
         date: { gte: startDate, lte: endDate },
       },
     })
 
     const campaigns = await prisma.campaign.findMany({
-      where: { userId: user.id, status: 'active' },
+      where: { orgId: org.id, status: 'active' },
     })
 
     const totalSpend = reports.reduce((s, r) => s + r.spend, 0)

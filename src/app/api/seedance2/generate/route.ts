@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getCurrentUser } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 import { Seedance2Client } from '@/lib/platforms/seedance2'
 
 const SEEDANCE2_API_KEY = process.env.SEEDANCE2_API_KEY || ''
 
 export async function POST(req: NextRequest) {
+  let user, org
   try {
-    const user = await getCurrentUser()
+    const ctx = await requireAuthWithOrg()
+    user = ctx.user
+    org = ctx.org
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  try {
     const data = await req.json()
 
     const {
@@ -69,11 +77,12 @@ export async function POST(req: NextRequest) {
         })
     }
 
-    // Save to shared asset library
+    // Save to org's asset library
     const asset = await prisma.asset.create({
       data: {
-        uploadedBy: user?.id || 'anonymous',
-        uploaderName: user?.name || user?.email || 'Anonymous',
+        orgId: org.id,
+        uploadedBy: user.id,
+        uploaderName: user.name || user.email,
         name: name || `Seedance2 - ${new Date().toLocaleDateString()}`,
         type: 'video',
         source: 'seedance2',

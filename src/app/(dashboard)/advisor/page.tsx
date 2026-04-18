@@ -14,11 +14,16 @@ interface Report {
   conversions: number
 }
 
+type AdviceAction =
+  | { type: 'pause_campaign'; campaignId: string }
+  | { type: 'resume_campaign'; campaignId: string }
+
 interface Advice {
   title: string
   description: string
   severity: 'info' | 'warning' | 'opportunity' | 'alert'
   recommendedAction?: string
+  action?: AdviceAction
 }
 
 interface AdvisorResponse {
@@ -68,6 +73,35 @@ export default function AdvisorPage() {
       })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const [applying, setApplying] = useState<number | null>(null)
+
+  async function applyAction(idx: number, action: AdviceAction) {
+    const actionLabel =
+      action.type === 'pause_campaign' ? 'Pause this campaign' : 'Resume this campaign'
+    if (!confirm(`${actionLabel}?`)) return
+    setApplying(idx)
+    try {
+      const res = await fetch(api('/api/advisor/apply'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(action),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Apply failed')
+      toast({ variant: 'success', title: data.message || 'Applied' })
+      // Remove this advice's action so the button doesn't re-appear
+      setAdvice((prev) => prev.map((a, i) => (i === idx ? { ...a, action: undefined } : a)))
+    } catch (err) {
+      toast({
+        variant: 'error',
+        title: 'Apply failed',
+        description: err instanceof Error ? err.message : undefined,
+      })
+    } finally {
+      setApplying(null)
     }
   }
 
@@ -179,6 +213,22 @@ export default function AdvisorPage() {
                         <span>→</span>
                         <span>{a.recommendedAction}</span>
                       </p>
+                    )}
+                    {a.action && (
+                      <div className="mt-3">
+                        <Button
+                          size="sm"
+                          variant={a.action.type === 'pause_campaign' ? 'outline' : 'primary'}
+                          onClick={() => applyAction(i, a.action!)}
+                          disabled={applying === i}
+                        >
+                          {applying === i
+                            ? 'Applying…'
+                            : a.action.type === 'pause_campaign'
+                            ? '⏸ Pause Campaign'
+                            : '▶ Resume Campaign'}
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </div>

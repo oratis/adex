@@ -1,41 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 
 // POST /api/ads — create an Ad (and parent AdGroup if needed) under a Campaign.
-// Body: { campaignId, creativeId, name, headline?, description?, callToAction?, destinationUrl?, adGroupName? }
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const body = await req.json()
 
     const { campaignId, creativeId, name } = body
     if (!campaignId || !name) {
-      return NextResponse.json(
-        { error: 'campaignId and name are required' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'campaignId and name are required' }, { status: 400 })
     }
 
-    // Ownership check: campaign belongs to user
     const campaign = await prisma.campaign.findFirst({
-      where: { id: campaignId, userId: user.id },
+      where: { id: campaignId, orgId: org.id },
     })
     if (!campaign) {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
     }
 
-    // Optional: verify creative ownership
     if (creativeId) {
       const creative = await prisma.creative.findFirst({
-        where: { id: creativeId, userId: user.id },
+        where: { id: creativeId, orgId: org.id },
       })
       if (!creative) {
         return NextResponse.json({ error: 'Creative not found' }, { status: 404 })
       }
     }
 
-    // Re-use the first AdGroup on the campaign, or create a "Default" one.
     let adGroup = await prisma.adGroup.findFirst({
       where: { campaignId },
       orderBy: { createdAt: 'asc' },
@@ -69,16 +62,16 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// GET /api/ads?campaignId=... — list ads for a campaign (owned by current user)
+// GET /api/ads?campaignId=...
 export async function GET(req: NextRequest) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const campaignId = req.nextUrl.searchParams.get('campaignId')
     if (!campaignId) {
       return NextResponse.json({ error: 'campaignId required' }, { status: 400 })
     }
     const campaign = await prisma.campaign.findFirst({
-      where: { id: campaignId, userId: user.id },
+      where: { id: campaignId, orgId: org.id },
     })
     if (!campaign) {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })

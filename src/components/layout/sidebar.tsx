@@ -2,8 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
-import { cn } from '@/lib/utils'
+import { useEffect, useState } from 'react'
+import { cn, api } from '@/lib/utils'
 import { useTheme } from '@/components/theme-provider'
 import { useT } from '@/components/i18n-provider'
 import { LOCALES, LOCALE_LABELS, type Locale } from '@/lib/i18n'
@@ -19,12 +19,53 @@ const navItems = [
   { href: '/settings',  key: 'nav.settings',   icon: '⚙️' },
 ]
 
-export function Sidebar({ userName }: { userName?: string }) {
+type Org = { id: string; name: string; role: string; isActive: boolean }
+
+export function Sidebar({
+  userName,
+  orgName,
+  orgRole,
+}: {
+  userName?: string
+  orgName?: string
+  orgRole?: string
+}) {
   const pathname = usePathname()
   const router = useRouter()
   const [loggingOut, setLoggingOut] = useState(false)
+  const [orgs, setOrgs] = useState<Org[]>([])
+  const [orgMenuOpen, setOrgMenuOpen] = useState(false)
   const { resolvedTheme, toggle } = useTheme()
   const { t, locale, setLocale } = useT()
+
+  useEffect(() => {
+    loadOrgs()
+  }, [])
+
+  async function loadOrgs() {
+    try {
+      const res = await fetch(api('/api/orgs'))
+      const data = await res.json()
+      if (Array.isArray(data)) setOrgs(data)
+    } catch {
+      // silent
+    }
+  }
+
+  async function switchOrg(orgId: string) {
+    try {
+      await fetch(api('/api/orgs/switch'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orgId }),
+      })
+      setOrgMenuOpen(false)
+      // Full reload so server components re-resolve with new active org
+      window.location.reload()
+    } catch {
+      // silent
+    }
+  }
 
   async function handleLogout() {
     if (loggingOut) return
@@ -47,6 +88,67 @@ export function Sidebar({ userName }: { userName?: string }) {
         </h1>
         <p className="text-xs text-gray-400 mt-1">Automated Ad Agent</p>
       </div>
+
+      {orgName && (
+        <div className="px-4 py-3 border-b border-gray-800 relative">
+          <button
+            onClick={() => setOrgMenuOpen((v) => !v)}
+            className="w-full flex items-center justify-between gap-2 text-left px-2 py-1.5 rounded-lg hover:bg-gray-800 transition-colors"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="text-xs text-gray-500">{t('workspace.label')}</p>
+              <p className="text-sm font-medium truncate" title={orgName}>
+                {orgName}
+              </p>
+              {orgRole && (
+                <p className="text-[10px] text-gray-500 uppercase tracking-wide mt-0.5">
+                  {orgRole}
+                </p>
+              )}
+            </div>
+            <span className="text-gray-400 text-xs">{orgMenuOpen ? '▴' : '▾'}</span>
+          </button>
+
+          {orgMenuOpen && (
+            <div className="absolute left-2 right-2 top-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-20 overflow-hidden">
+              <div className="max-h-64 overflow-y-auto">
+                {orgs.map((o) => (
+                  <button
+                    key={o.id}
+                    onClick={() => switchOrg(o.id)}
+                    className={cn(
+                      'w-full text-left px-3 py-2 text-sm hover:bg-gray-700 transition-colors flex items-center justify-between',
+                      o.isActive && 'bg-blue-600/20 text-blue-300'
+                    )}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate">{o.name}</p>
+                      <p className="text-[10px] text-gray-500 uppercase">{o.role}</p>
+                    </div>
+                    {o.isActive && <span className="text-xs">✓</span>}
+                  </button>
+                ))}
+              </div>
+              <div className="border-t border-gray-700">
+                <Link
+                  href="/settings?tab=members"
+                  onClick={() => setOrgMenuOpen(false)}
+                  className="block px-3 py-2 text-sm text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+                >
+                  {t('workspace.manage_members')}
+                </Link>
+                <Link
+                  href="/settings?tab=members&new=1"
+                  onClick={() => setOrgMenuOpen(false)}
+                  className="block px-3 py-2 text-sm text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+                >
+                  {t('workspace.create_new')}
+                </Link>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       <nav className="flex-1 px-3 py-4 space-y-1">
         {navItems.map((item) => (
           <Link

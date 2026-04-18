@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentUser, getCurrentOrg } from '@/lib/auth'
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_ADS_CLIENT_ID || ''
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_ADS_CLIENT_SECRET || ''
@@ -72,9 +72,15 @@ export async function GET(req: NextRequest) {
       tokenData.refreshToken = tokens.refresh_token
     }
 
-    // Save to PlatformAuth (find + update/create)
+    // Resolve active org for this user
+    const ctx = await getCurrentOrg(user.id)
+    if (!ctx) {
+      return publicRedirect(`/settings?error=no_org&detail=${encodeURIComponent('User has no organization. Log out and back in to bootstrap a workspace.')}`)
+    }
+
+    // Save to PlatformAuth (scoped to org)
     const existing = await prisma.platformAuth.findUnique({
-      where: { userId_platform: { userId: user.id, platform: 'google' } },
+      where: { orgId_platform: { orgId: ctx.org.id, platform: 'google' } },
     })
 
     if (existing) {
@@ -85,6 +91,7 @@ export async function GET(req: NextRequest) {
     } else {
       await prisma.platformAuth.create({
         data: {
+          orgId: ctx.org.id,
           userId: user.id,
           platform: 'google',
           accessToken: tokens.access_token,

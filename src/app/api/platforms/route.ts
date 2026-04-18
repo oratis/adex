@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 
 export async function GET() {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const auths = await prisma.platformAuth.findMany({
-      where: { userId: user.id },
+      where: { orgId: org.id },
     })
 
-    // Mask sensitive token fields - only indicate presence
     const masked = auths.map(a => ({
       id: a.id,
       platform: a.platform,
@@ -32,18 +31,16 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth()
+    const { user, org } = await requireAuthWithOrg()
     const data = await req.json()
     const platform = data.platform as string
 
-    // Check if record exists
+    // Check if record exists (scoped to org)
     const existing = await prisma.platformAuth.findUnique({
-      where: { userId_platform: { userId: user.id, platform } },
+      where: { orgId_platform: { orgId: org.id, platform } },
     })
 
     if (existing) {
-      // Only update fields that have non-empty values
-      // This preserves OAuth tokens when user only saves MCC ID + Developer Token
       const updates: Record<string, string | boolean> = { isActive: true }
       if (data.accountId) updates.accountId = data.accountId
       if (data.appId) updates.appId = data.appId
@@ -62,9 +59,9 @@ export async function POST(req: NextRequest) {
         accountId: auth.accountId, apiKey: auth.apiKey, appId: auth.appId,
       })
     } else {
-      // Create new record
       const auth = await prisma.platformAuth.create({
         data: {
+          orgId: org.id,
           userId: user.id,
           platform,
           accountId: data.accountId || null,
@@ -89,10 +86,10 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const { platform } = await req.json()
     await prisma.platformAuth.deleteMany({
-      where: { userId: user.id, platform },
+      where: { orgId: org.id, platform },
     })
     return NextResponse.json({ ok: true })
   } catch {

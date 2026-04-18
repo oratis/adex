@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithOrg } from '@/lib/auth'
 import { uploadToGCS } from '@/lib/storage'
 
 export async function GET() {
   try {
-    const user = await requireAuth()
+    const { org } = await requireAuthWithOrg()
     const creatives = await prisma.creative.findMany({
-      where: { userId: user.id },
+      where: { orgId: org.id },
       orderBy: { createdAt: 'desc' },
     })
     return NextResponse.json(creatives)
@@ -18,7 +18,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth()
+    const { user, org } = await requireAuthWithOrg()
     const contentType = req.headers.get('content-type') || ''
 
     if (contentType.includes('multipart/form-data')) {
@@ -30,12 +30,12 @@ export async function POST(req: NextRequest) {
       const buffer = Buffer.from(bytes)
       const filename = `${Date.now()}-${file.name}`
 
-      // Upload to Google Cloud Storage
       const fileUrl = await uploadToGCS(buffer, filename, file.type || 'application/octet-stream')
 
       const isVideo = file.type.startsWith('video/')
       const creative = await prisma.creative.create({
         data: {
+          orgId: org.id,
           userId: user.id,
           name: formData.get('name') as string || file.name,
           type: isVideo ? 'video' : 'image',
@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
     const data = await req.json()
     const creative = await prisma.creative.create({
       data: {
+        orgId: org.id,
         userId: user.id,
         name: data.name,
         type: data.type || 'image',
@@ -62,7 +63,8 @@ export async function POST(req: NextRequest) {
       },
     })
     return NextResponse.json(creative)
-  } catch {
-    return NextResponse.json({ error: 'Failed to create creative' }, { status: 500 })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to create creative'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
