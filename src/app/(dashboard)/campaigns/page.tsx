@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
+import { useT } from '@/components/i18n-provider'
 import Link from 'next/link'
 import { api } from '@/lib/utils'
 
@@ -63,6 +64,7 @@ const emptyForm: FormState = {
 
 export default function CampaignsPage() {
   const { toast } = useToast()
+  const { t } = useT()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [showCreate, setShowCreate] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -236,8 +238,8 @@ export default function CampaignsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Campaigns</h1>
-          <p className="text-gray-500 text-sm mt-1">Manage your ad campaigns across all platforms</p>
+          <h1 className="text-2xl font-bold">{t('page.campaigns.title')}</h1>
+          <p className="text-gray-500 text-sm mt-1">{t('page.campaigns.subtitle')}</p>
         </div>
         <Button onClick={() => { setForm(emptyForm); setShowCreate(true) }}>+ New Campaign</Button>
       </div>

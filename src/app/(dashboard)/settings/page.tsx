@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -94,7 +95,13 @@ const PLATFORMS: PlatformConfig[] = [
 
 export default function SettingsPage() {
   const { toast } = useToast()
+  const router = useRouter()
   const [auths, setAuths] = useState<PlatformAuth[]>([])
+  // Account management
+  const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' })
+  const [pwSaving, setPwSaving] = useState(false)
+  const [deleteForm, setDeleteForm] = useState({ password: '', confirm: '' })
+  const [deleting, setDeleting] = useState(false)
   const [formData, setFormData] = useState<Record<string, Record<string, string>>>({})
   const [saving, setSaving] = useState<string | null>(null)
   const [profile, setProfile] = useState({ name: '', dailyReportEmail: '' })
@@ -235,6 +242,74 @@ export default function SettingsPage() {
       toast({ variant: 'error', title: 'Save failed', description: err instanceof Error ? err.message : undefined })
     } finally {
       setSavingProfile(false)
+    }
+  }
+
+  async function changePassword(e: React.FormEvent) {
+    e.preventDefault()
+    if (pwForm.next !== pwForm.confirm) {
+      toast({ variant: 'error', title: 'Passwords do not match' })
+      return
+    }
+    if (pwForm.next.length < 8) {
+      toast({ variant: 'error', title: 'New password must be at least 8 characters' })
+      return
+    }
+    setPwSaving(true)
+    try {
+      const res = await fetch(api('/api/auth/change-password'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: pwForm.current,
+          newPassword: pwForm.next,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Change failed')
+      toast({ variant: 'success', title: 'Password changed' })
+      setPwForm({ current: '', next: '', confirm: '' })
+    } catch (err) {
+      toast({
+        variant: 'error',
+        title: 'Change failed',
+        description: err instanceof Error ? err.message : undefined,
+      })
+    } finally {
+      setPwSaving(false)
+    }
+  }
+
+  async function deleteAccount(e: React.FormEvent) {
+    e.preventDefault()
+    if (deleteForm.confirm !== 'DELETE') {
+      toast({ variant: 'error', title: 'Type DELETE to confirm' })
+      return
+    }
+    if (!confirm('This will permanently delete your account and ALL data. Continue?')) return
+    setDeleting(true)
+    try {
+      const res = await fetch(api('/api/auth/delete-account'), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: deleteForm.password,
+          confirm: deleteForm.confirm,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Delete failed')
+      toast({ variant: 'success', title: 'Account deleted' })
+      router.push('/login')
+      router.refresh()
+    } catch (err) {
+      toast({
+        variant: 'error',
+        title: 'Delete failed',
+        description: err instanceof Error ? err.message : undefined,
+      })
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -409,6 +484,100 @@ export default function SettingsPage() {
                 </form>
               </CardContent>
             </Card>
+          ),
+        },
+        {
+          id: 'account',
+          label: 'Account',
+          content: (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader><CardTitle>Change Password</CardTitle></CardHeader>
+                <CardContent>
+                  <form onSubmit={changePassword} className="space-y-4 max-w-md">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Current password</label>
+                      <Input
+                        type="password"
+                        value={pwForm.current}
+                        onChange={e => setPwForm(f => ({ ...f, current: e.target.value }))}
+                        required
+                        autoComplete="current-password"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">New password</label>
+                      <Input
+                        type="password"
+                        value={pwForm.next}
+                        onChange={e => setPwForm(f => ({ ...f, next: e.target.value }))}
+                        required
+                        minLength={8}
+                        autoComplete="new-password"
+                        placeholder="At least 8 characters"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Confirm new password</label>
+                      <Input
+                        type="password"
+                        value={pwForm.confirm}
+                        onChange={e => setPwForm(f => ({ ...f, confirm: e.target.value }))}
+                        required
+                        minLength={8}
+                        autoComplete="new-password"
+                      />
+                    </div>
+                    <Button type="submit" disabled={pwSaving}>
+                      {pwSaving ? 'Changing...' : 'Change Password'}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-red-600">Danger Zone</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={deleteAccount} className="space-y-4 max-w-md">
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
+                      Deleting your account is <strong>permanent</strong>. All campaigns,
+                      creatives, budgets, reports, and platform connections will be removed.
+                      Uploaded assets remain in shared storage and must be cleared separately.
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Current password</label>
+                      <Input
+                        type="password"
+                        value={deleteForm.password}
+                        onChange={e => setDeleteForm(f => ({ ...f, password: e.target.value }))}
+                        required
+                        autoComplete="current-password"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Type <code className="bg-gray-100 px-1 rounded">DELETE</code> to confirm
+                      </label>
+                      <Input
+                        value={deleteForm.confirm}
+                        onChange={e => setDeleteForm(f => ({ ...f, confirm: e.target.value }))}
+                        placeholder="DELETE"
+                        required
+                      />
+                    </div>
+                    <Button
+                      type="submit"
+                      variant="danger"
+                      disabled={deleting || deleteForm.confirm !== 'DELETE'}
+                    >
+                      {deleting ? 'Deleting...' : 'Delete Account Permanently'}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+            </div>
           ),
         },
       ]} />

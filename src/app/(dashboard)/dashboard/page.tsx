@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { TrendChart, type TrendSeries } from '@/components/ui/trend-chart'
+import { useT } from '@/components/i18n-provider'
 import { formatCurrency, formatNumber, api } from '@/lib/utils'
 
 interface Report {
@@ -35,6 +36,7 @@ interface SyncResult {
 }
 
 export default function DashboardPage() {
+  const { t } = useT()
   const [reports, setReports] = useState<Report[]>([])
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [syncing, setSyncing] = useState(false)
@@ -153,15 +155,15 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-1">Overview of your ad performance across all platforms</p>
+          <h1 className="text-2xl font-bold">{t('page.dashboard.title')}</h1>
+          <p className="text-gray-500 text-sm mt-1">{t('page.dashboard.subtitle')}</p>
         </div>
         <div className="flex items-center gap-3">
           <Button onClick={loadDashboard} variant="outline" size="sm" disabled={loading}>
-            Refresh
+            {t('action.refresh')}
           </Button>
           <Button onClick={handleSync} disabled={syncing} variant="outline">
-            {syncing ? 'Syncing...' : 'Sync Data'}
+            {syncing ? t('action.syncing') : t('action.sync')}
           </Button>
         </div>
       </div>
@@ -188,10 +190,10 @@ export default function DashboardPage() {
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard title="Total Spend" value={formatCurrency(totalSpend)} icon={<span>💰</span>} />
-            <StatCard title="Revenue" value={formatCurrency(totalRevenue)} changeType={roas > 1 ? 'positive' : 'negative'} change={`ROAS: ${roas.toFixed(2)}x`} icon={<span>📈</span>} />
-            <StatCard title="Impressions" value={formatNumber(totalImpressions)} change={`CTR: ${ctr.toFixed(2)}%`} icon={<span>👁️</span>} />
-            <StatCard title="Conversions" value={formatNumber(totalConversions)} change={`Installs: ${formatNumber(totalInstalls)}`} icon={<span>🎯</span>} />
+            <StatCard title={t('stats.total_spend')} value={formatCurrency(totalSpend)} icon={<span>💰</span>} />
+            <StatCard title={t('stats.revenue')} value={formatCurrency(totalRevenue)} changeType={roas > 1 ? 'positive' : 'negative'} change={`ROAS: ${roas.toFixed(2)}x`} icon={<span>📈</span>} />
+            <StatCard title={t('stats.impressions')} value={formatNumber(totalImpressions)} change={`CTR: ${ctr.toFixed(2)}%`} icon={<span>👁️</span>} />
+            <StatCard title={t('stats.conversions')} value={formatNumber(totalConversions)} change={`Installs: ${formatNumber(totalInstalls)}`} icon={<span>🎯</span>} />
           </div>
 
           {reports.length === 0 && campaigns.length === 0 && (
