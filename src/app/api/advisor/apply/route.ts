@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { logAudit } from '@/lib/audit'
 
 /**
  * Apply a safe, reversible advisor action. We deliberately restrict to
@@ -56,6 +57,15 @@ export async function POST(req: NextRequest) {
           where: { id: campaign.id },
           data: { status: 'paused' },
         })
+        await logAudit({
+          orgId: org.id,
+          userId: user.id,
+          action: 'advisor.apply',
+          targetType: 'campaign',
+          targetId: campaign.id,
+          metadata: { applied: 'pause_campaign', name: campaign.name },
+          req,
+        })
         return NextResponse.json({
           ok: true,
           message: `Paused "${campaign.name}"`,
@@ -73,6 +83,15 @@ export async function POST(req: NextRequest) {
         await prisma.campaign.update({
           where: { id: campaign.id },
           data: { status: 'active' },
+        })
+        await logAudit({
+          orgId: org.id,
+          userId: user.id,
+          action: 'advisor.apply',
+          targetType: 'campaign',
+          targetId: campaign.id,
+          metadata: { applied: 'resume_campaign', name: campaign.name },
+          req,
         })
         return NextResponse.json({
           ok: true,

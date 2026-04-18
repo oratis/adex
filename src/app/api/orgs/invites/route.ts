@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg, assertRole } from '@/lib/auth'
 import { sendMail } from '@/lib/mailer'
+import { logAudit } from '@/lib/audit'
 
 const TTL_DAYS = 7
 
@@ -106,6 +107,16 @@ export async function POST(req: NextRequest) {
       to: email,
       subject: `You\u2019re invited to ${org.name} on Adex`,
       html,
+    })
+
+    await logAudit({
+      orgId: org.id,
+      userId: user.id,
+      action: 'member.invite',
+      targetType: 'invite',
+      targetId: invite.id,
+      metadata: { email, role: inviteRole },
+      req,
     })
 
     // Dev affordance: expose URL when SMTP not configured

@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
+import { logAudit } from '@/lib/audit'
 import { GoogleAdsClient } from '@/lib/platforms/google'
 import { MetaAdsClient } from '@/lib/platforms/meta'
 import { TikTokAdsClient } from '@/lib/platforms/tiktok'
 
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { org } = await requireAuthWithOrg()
+    const { user, org } = await requireAuthWithOrg()
     const { id } = await params
 
     const campaign = await prisma.campaign.findFirst({
@@ -72,6 +73,16 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     await prisma.campaign.update({
       where: { id },
       data: { status: 'active' },
+    })
+
+    await logAudit({
+      orgId: org.id,
+      userId: user.id,
+      action: 'campaign.launch',
+      targetType: 'campaign',
+      targetId: id,
+      metadata: { platform: campaign.platform, name: campaign.name },
+      req,
     })
 
     return NextResponse.json({ success: true, platformResponse: result })

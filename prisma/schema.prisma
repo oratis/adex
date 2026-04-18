@@ -43,6 +43,7 @@ model Organization {
   reports       Report[]
   platformAuths PlatformAuth[]
   assets        Asset[]
+  auditEvents   AuditEvent[]
 }
 
 model OrgMembership {
@@ -243,6 +244,23 @@ model DailyDigest {
   advice    String?  // AI-generated advice
   sentAt    DateTime?
   createdAt DateTime @default(now())
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  orgId      String
+  userId     String?  // null for system/cron events
+  action     String   // e.g. "campaign.launch", "member.invite", "advisor.apply"
+  targetType String?  // "campaign", "creative", "member", etc.
+  targetId   String?
+  metadata   String?  // JSON blob of extra context
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([userId])
 }
 
 model PasswordResetToken {

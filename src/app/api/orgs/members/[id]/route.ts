@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg, assertRole, type OrgRole } from '@/lib/auth'
+import { logAudit } from '@/lib/audit'
 
 // PUT /api/orgs/members/[id] — change a member's role (admin/owner only).
 // body: { role: 'owner' | 'admin' | 'member' }
@@ -9,7 +10,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { org, role } = await requireAuthWithOrg()
+    const { user, org, role } = await requireAuthWithOrg()
     assertRole(role, 'admin')
 
     const { id } = await params
@@ -50,6 +51,15 @@ export async function PUT(
       where: { id },
       data: { role: newRole },
     })
+    await logAudit({
+      orgId: org.id,
+      userId: user.id,
+      action: 'member.role_change',
+      targetType: 'membership',
+      targetId: id,
+      metadata: { targetUserId: target.userId, fromRole: target.role, toRole: newRole },
+      req,
+    })
     return NextResponse.json(updated)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Update failed'
@@ -59,7 +69,7 @@ export async function PUT(
 
 // DELETE /api/orgs/members/[id] — remove a member from the org
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -100,6 +110,15 @@ export async function DELETE(
     }
 
     await prisma.orgMembership.delete({ where: { id } })
+    await logAudit({
+      orgId: org.id,
+      userId: user.id,
+      action: 'member.remove',
+      targetType: 'membership',
+      targetId: id,
+      metadata: { targetUserId: target.userId, self: isSelf, role: target.role },
+      req,
+    })
     return NextResponse.json({ ok: true, self: isSelf })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Remove failed'

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
+import { logAudit } from '@/lib/audit'
 
 export async function GET() {
   try {
@@ -37,6 +38,16 @@ export async function POST(req: NextRequest) {
         startDate: data.startDate ? new Date(data.startDate) : null,
         endDate: data.endDate ? new Date(data.endDate) : null,
       },
+    })
+
+    await logAudit({
+      orgId: org.id,
+      userId: user.id,
+      action: 'campaign.create',
+      targetType: 'campaign',
+      targetId: campaign.id,
+      metadata: { name: campaign.name, platform: campaign.platform },
+      req,
     })
 
     return NextResponse.json(campaign)

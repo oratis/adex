@@ -162,6 +162,9 @@ export default function DashboardPage() {
           <Button onClick={loadDashboard} variant="outline" size="sm" disabled={loading}>
             {t('action.refresh')}
           </Button>
+          <a href={api('/api/reports/export')} download>
+            <Button variant="outline" size="sm">⬇ CSV</Button>
+          </a>
           <Button onClick={handleSync} disabled={syncing} variant="outline">
             {syncing ? t('action.syncing') : t('action.sync')}
           </Button>

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
+import { logAudit } from '@/lib/audit'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -19,7 +20,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { org } = await requireAuthWithOrg()
+    const { user, org } = await requireAuthWithOrg()
     const { id } = await params
     const data = await req.json()
 
@@ -41,17 +42,41 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       },
     })
 
+    // Pause/resume/update — record distinct actions so the audit trail is
+    // useful. Status transitions are the most audit-interesting.
+    const action =
+      data.status === 'paused' ? 'campaign.pause'
+      : data.status === 'active' ? 'campaign.resume'
+      : 'campaign.update'
+    await logAudit({
+      orgId: org.id,
+      userId: user.id,
+      action,
+      targetType: 'campaign',
+      targetId: id,
+      metadata: data.status ? { status: data.status } : { updatedFields: Object.keys(data) },
+      req,
+    })
+
     return NextResponse.json(campaign)
   } catch {
     return NextResponse.json({ error: 'Failed to update' }, { status: 500 })
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { org } = await requireAuthWithOrg()
+    const { user, org } = await requireAuthWithOrg()
     const { id } = await params
     await prisma.campaign.deleteMany({ where: { id, orgId: org.id } })
+    await logAudit({
+      orgId: org.id,
+      userId: user.id,
+      action: 'campaign.delete',
+      targetType: 'campaign',
+      targetId: id,
+      req,
+    })
     return NextResponse.json({ ok: true })
   } catch {
     return NextResponse.json({ error: 'Failed to delete' }, { status: 500 })

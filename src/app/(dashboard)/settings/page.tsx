@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/toast'
 import { MembersPanel } from '@/components/members-panel'
+import { AuditPanel } from '@/components/audit-panel'
 import { api } from '@/lib/utils'
 
 interface PlatformAuth {
@@ -491,6 +492,11 @@ export default function SettingsPage() {
           id: 'members',
           label: 'Team',
           content: <MembersPanel />,
+        },
+        {
+          id: 'audit',
+          label: 'Audit Log',
+          content: <AuditPanel />,
         },
         {
           id: 'account',
