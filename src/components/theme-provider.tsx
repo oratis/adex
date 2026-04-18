@@ -1,26 +1,64 @@
 'use client'
 
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useSyncExternalStore,
+} from 'react'
 
 type Theme = 'light' | 'dark' | 'system'
+type ResolvedTheme = 'light' | 'dark'
 
 type ThemeContextValue = {
   theme: Theme
-  resolvedTheme: 'light' | 'dark'
+  resolvedTheme: ResolvedTheme
   setTheme: (t: Theme) => void
   toggle: () => void
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null)
-
 const STORAGE_KEY = 'adex.theme'
 
-function systemPrefersDark(): boolean {
+// Custom event so multiple ThemeProvider readers stay in sync within the
+// same tab (the native 'storage' event only fires across tabs).
+const THEME_CHANGE = 'adex:theme-change'
+
+function readStoredTheme(): Theme {
+  if (typeof window === 'undefined') return 'system'
+  try {
+    const v = window.localStorage.getItem(STORAGE_KEY)
+    if (v === 'light' || v === 'dark' || v === 'system') return v
+  } catch {
+    // ignore
+  }
+  return 'system'
+}
+
+function subscribeTheme(cb: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  window.addEventListener(THEME_CHANGE, cb)
+  window.addEventListener('storage', cb)
+  return () => {
+    window.removeEventListener(THEME_CHANGE, cb)
+    window.removeEventListener('storage', cb)
+  }
+}
+
+function subscribeSystem(cb: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  const mq = window.matchMedia('(prefers-color-scheme: dark)')
+  mq.addEventListener('change', cb)
+  return () => mq.removeEventListener('change', cb)
+}
+
+function getSystemIsDark(): boolean {
   if (typeof window === 'undefined') return false
   return window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
-function applyTheme(resolved: 'light' | 'dark') {
+function applyThemeClass(resolved: ResolvedTheme) {
   if (typeof document === 'undefined') return
   const root = document.documentElement
   if (resolved === 'dark') root.classList.add('dark')
@@ -28,41 +66,34 @@ function applyTheme(resolved: 'light' | 'dark') {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>('system')
-  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light')
+  // Subscribed stores — no state-in-effect issue
+  const theme = useSyncExternalStore(
+    subscribeTheme,
+    readStoredTheme,
+    () => 'system' as Theme
+  )
 
-  // Initial load from localStorage
+  const systemIsDark = useSyncExternalStore(
+    subscribeSystem,
+    getSystemIsDark,
+    () => false
+  )
+
+  const resolvedTheme: ResolvedTheme =
+    theme === 'system' ? (systemIsDark ? 'dark' : 'light') : theme
+
+  // Imperative side-effect: sync DOM class when resolvedTheme changes
   useEffect(() => {
-    const stored = (typeof window !== 'undefined' && localStorage.getItem(STORAGE_KEY)) as
-      | Theme
-      | null
-    const initial: Theme = stored || 'system'
-    setThemeState(initial)
-  }, [])
-
-  // Apply theme whenever it changes + respond to system changes when 'system'
-  useEffect(() => {
-    const compute = (): 'light' | 'dark' =>
-      theme === 'system' ? (systemPrefersDark() ? 'dark' : 'light') : theme
-    const resolved = compute()
-    setResolvedTheme(resolved)
-    applyTheme(resolved)
-
-    if (theme === 'system' && typeof window !== 'undefined') {
-      const mq = window.matchMedia('(prefers-color-scheme: dark)')
-      const handler = () => {
-        const r = systemPrefersDark() ? 'dark' : 'light'
-        setResolvedTheme(r)
-        applyTheme(r)
-      }
-      mq.addEventListener('change', handler)
-      return () => mq.removeEventListener('change', handler)
-    }
-  }, [theme])
+    applyThemeClass(resolvedTheme)
+  }, [resolvedTheme])
 
   const setTheme = useCallback((t: Theme) => {
-    setThemeState(t)
-    if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY, t)
+    try {
+      window.localStorage.setItem(STORAGE_KEY, t)
+    } catch {
+      // storage may be unavailable
+    }
+    window.dispatchEvent(new Event(THEME_CHANGE))
   }, [])
 
   const toggle = useCallback(() => {
@@ -76,13 +107,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function useTheme() {
+export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext)
   if (!ctx) {
-    // Safe fallback so components can mount outside provider
     return {
-      theme: 'light' as Theme,
-      resolvedTheme: 'light' as const,
+      theme: 'light',
+      resolvedTheme: 'light',
       setTheme: () => {},
       toggle: () => {},
     }
