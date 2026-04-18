@@ -17,7 +17,9 @@ export function formatPercent(num: number) {
   return `${(num * 100).toFixed(2)}%`
 }
 
-const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '/adex'
+// Matches the basePath configured in next.config.ts. Empty string means
+// the app is deployed at the root of its domain (e.g. adexads.com).
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || ''
 
 export function api(path: string) {
   return `${BASE_PATH}${path}`

@@ -12,7 +12,7 @@ function hashToken(token: string): string {
 
 function inviteUrl(token: string): string {
   const base = process.env.PUBLIC_URL || 'http://localhost:3000'
-  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '/adex'
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ''
   return `${base}${basePath}/accept-invite?token=${encodeURIComponent(token)}`
 }
 

@@ -5,8 +5,11 @@
  */
 import { test, expect } from '@playwright/test'
 
-// App runs under /adex basePath — prefix helper.
-const p = (path: string) => `/adex${path.startsWith('/') ? path : '/' + path}`
+// App basePath is configurable — default to '' (root). Tests run in both
+// contexts. Helper prefixes a leading slash if missing.
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || ''
+const p = (path: string) =>
+  `${BASE_PATH}${path.startsWith('/') ? path : '/' + path}`
 
 test.describe('public pages', () => {
   test('login page renders with form', async ({ page }) => {
@@ -53,7 +56,7 @@ test.describe('auth guard', () => {
   for (const route of protectedRoutes) {
     test(`${route} redirects unauthenticated users to /login`, async ({ page }) => {
       await page.goto(p(route))
-      await expect(page).toHaveURL(/\/adex\/login$/)
+      await expect(page).toHaveURL(new RegExp(`${BASE_PATH.replace(/\//g, '\\/')}\\/login$`))
     })
   }
 })

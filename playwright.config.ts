@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const PORT = process.env.PORT || '3000'
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || ''
 
 export default defineConfig({
   testDir: './e2e',
@@ -10,9 +11,6 @@ export default defineConfig({
   workers: process.env.CI ? 2 : undefined,
   reporter: [['list']],
   use: {
-    // baseURL is the origin only; each test prefixes paths with /adex itself
-    // (see the `p` helper in test files). This avoids URL-resolution quirks
-    // when baseURL has a path segment.
     baseURL: `http://localhost:${PORT}`,
     trace: 'on-first-retry',
   },
@@ -24,7 +22,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run dev',
-    url: `http://localhost:${PORT}/adex/login`,
+    url: `http://localhost:${PORT}${BASE_PATH}/login`,
     timeout: 120_000,
     reuseExistingServer: !process.env.CI,
     env: {

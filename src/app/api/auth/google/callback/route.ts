@@ -6,7 +6,7 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_ADS_CLIENT_ID || ''
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_ADS_CLIENT_SECRET || ''
 const REDIRECT_URI = process.env.GOOGLE_ADS_REDIRECT_URI || ''
 const PUBLIC_URL = process.env.PUBLIC_URL || ''
-const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '/adex'
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || ''
 
 function publicRedirect(path: string) {
   return NextResponse.redirect(`${PUBLIC_URL}${BASE_PATH}${path}`)
