@@ -81,12 +81,22 @@ ALTER TABLE "Asset"        ADD COLUMN "orgId" TEXT;
 
 -- === Backfill orgId from the creator's personal org =========================
 
+-- Resources created by real users map to that user's personal org.
+-- Assets uploaded by non-user accounts (e.g. 'anonymous', 'gdrive-sync')
+-- are adopted by the oldest org in the system — typically the first
+-- admin — so they don't become unreachable.
 UPDATE "PlatformAuth" pa SET "orgId" = 'org_' || pa."userId";
 UPDATE "Campaign"     c  SET "orgId" = 'org_' || c."userId";
 UPDATE "Creative"     cr SET "orgId" = 'org_' || cr."userId";
 UPDATE "Budget"       b  SET "orgId" = 'org_' || b."userId";
 UPDATE "Report"       r  SET "orgId" = 'org_' || r."userId";
-UPDATE "Asset"        a  SET "orgId" = 'org_' || a."uploadedBy";
+
+UPDATE "Asset" a SET "orgId" = 'org_' || a."uploadedBy"
+  WHERE a."uploadedBy" IN (SELECT id FROM "User");
+
+UPDATE "Asset" a
+  SET "orgId" = (SELECT id FROM "Organization" ORDER BY "createdAt" ASC LIMIT 1)
+  WHERE a."uploadedBy" NOT IN (SELECT id FROM "User");
 
 -- === Enforce NOT NULL + add FK + indexes ====================================
 
