@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import {
   hashPassword,
-  signSessionToken,
+  createSession,
   SESSION_COOKIE,
   SESSION_MAX_AGE,
   ensurePersonalOrg,
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     const user = await prisma.user.create({
       data: {
         email,
-        password: hashPassword(password),
+        password: await hashPassword(password),
         name: name.trim(),
       },
     })
@@ -48,7 +48,14 @@ export async function POST(req: NextRequest) {
     // Every user gets a personal workspace on sign-up
     await ensurePersonalOrg(user)
 
-    const token = signSessionToken(user.id, SESSION_MAX_AGE)
+    const token = await createSession({
+      userId: user.id,
+      userAgent: req.headers.get('user-agent'),
+      ipAddress:
+        req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+        req.headers.get('x-real-ip') ||
+        null,
+    })
     const response = NextResponse.json({ id: user.id, email: user.email, name: user.name })
     response.cookies.set(SESSION_COOKIE, token, {
       httpOnly: true,

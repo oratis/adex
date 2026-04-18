@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { logAudit } from '@/lib/audit'
+import { fireWebhook } from '@/lib/webhooks'
 import { GoogleAdsClient } from '@/lib/platforms/google'
 import { MetaAdsClient } from '@/lib/platforms/meta'
 import { TikTokAdsClient } from '@/lib/platforms/tiktok'
@@ -84,6 +85,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       metadata: { platform: campaign.platform, name: campaign.name },
       req,
     })
+    fireWebhook({
+      orgId: org.id,
+      event: 'campaign.launched',
+      data: { campaignId: id, name: campaign.name, platform: campaign.platform, launchedBy: user.id },
+    }).catch(() => {})
 
     return NextResponse.json({ success: true, platformResponse: result })
   } catch (error) {

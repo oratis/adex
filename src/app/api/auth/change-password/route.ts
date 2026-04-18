@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       )
     }
-    if (!verifyPassword(currentPassword, user.password)) {
+    if (!(await verifyPassword(currentPassword, user.password))) {
       return NextResponse.json(
         { error: 'Current password is incorrect' },
         { status: 401 }
@@ -48,9 +48,10 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    const newHash = await hashPassword(newPassword)
     await prisma.user.update({
       where: { id: user.id },
-      data: { password: hashPassword(newPassword) },
+      data: { password: newHash },
     })
 
     // Invalidate all pending password-reset tokens when password changes

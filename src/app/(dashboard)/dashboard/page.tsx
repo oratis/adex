@@ -72,11 +72,13 @@ export default function DashboardPage() {
   }
 
   const PLATFORM_COLORS: Record<string, string> = {
-    google: '#3b82f6',
-    meta: '#8b5cf6',
-    tiktok: '#111827',
+    google:    '#3b82f6',
+    meta:      '#8b5cf6',
+    tiktok:    '#111827',
+    amazon:    '#ea580c',
+    linkedin:  '#0a66c2',
     appsflyer: '#f59e0b',
-    adjust: '#10b981',
+    adjust:    '#10b981',
   }
 
   function buildTrendSeries(metric: 'spend' | 'clicks' | 'conversions'): TrendSeries[] {
@@ -265,6 +267,8 @@ export default function DashboardPage() {
                   { id: 'google',    label: 'Google Ads',     icon: '🔵' },
                   { id: 'meta',      label: 'Meta (Facebook)', icon: '🟣' },
                   { id: 'tiktok',    label: 'TikTok',          icon: '⬛' },
+                  { id: 'amazon',    label: 'Amazon Ads',     icon: '🟠' },
+                  { id: 'linkedin',  label: 'LinkedIn Ads',   icon: '🔷' },
                   { id: 'appsflyer', label: 'AppsFlyer',       icon: '📱' },
                   { id: 'adjust',    label: 'Adjust',          icon: '📐' },
                 ].map(({ id, label, icon }) => {

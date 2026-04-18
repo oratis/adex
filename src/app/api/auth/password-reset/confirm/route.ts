@@ -60,10 +60,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Atomically: set new password AND mark token used
+    const newHash = await hashPassword(password)
     await prisma.$transaction([
       prisma.user.update({
         where: { id: user.id },
-        data: { password: hashPassword(password) },
+        data: { password: newHash },
       }),
       prisma.passwordResetToken.update({
         where: { id: record.id },

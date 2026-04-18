@@ -37,7 +37,7 @@ export async function DELETE(req: NextRequest) {
         { status: 400 }
       )
     }
-    if (!password || !verifyPassword(password, user.password)) {
+    if (!password || !(await verifyPassword(password, user.password))) {
       return NextResponse.json(
         { error: 'Password is incorrect' },
         { status: 401 }

@@ -6,6 +6,8 @@ import { MetaAdsClient } from '@/lib/platforms/meta'
 import { TikTokAdsClient } from '@/lib/platforms/tiktok'
 import { AppsFlyerClient } from '@/lib/platforms/appsflyer'
 import { AdjustClient } from '@/lib/platforms/adjust'
+import { AmazonAdsClient } from '@/lib/platforms/amazon'
+import { LinkedInAdsClient } from '@/lib/platforms/linkedin'
 import type { PlatformAuth } from '@/generated/prisma/client'
 
 type SyncMetrics = {
@@ -340,6 +342,68 @@ async function syncAdjust(
   return { success: true, rows: rows.length, ...metrics }
 }
 
+async function syncAmazon(
+  auth: PlatformAuth,
+  orgId: string,
+  userId: string,
+  startDate: string,
+  endDate: string,
+  today: Date
+) {
+  if (!auth.accessToken || !auth.accountId || !auth.appId) {
+    return { error: 'Missing access token, profile ID, or LWA client ID' }
+  }
+  const client = new AmazonAdsClient({
+    accessToken: auth.accessToken,
+    refreshToken: auth.refreshToken || undefined,
+    profileId: auth.accountId,
+    clientId: auth.appId,
+    clientSecret: auth.appSecret || undefined,
+  })
+
+  if (auth.refreshToken && auth.appSecret) {
+    try {
+      const token = await client.refreshAccessToken()
+      await prisma.platformAuth.update({
+        where: { id: auth.id },
+        data: { accessToken: token },
+      })
+    } catch (err) {
+      return { error: `Amazon token refresh failed: ${err instanceof Error ? err.message : 'unknown'}` }
+    }
+  }
+
+  const agg = await client.getAggregatedReport(startDate, endDate)
+  const metrics = { ...emptyMetrics(), ...agg }
+  await upsertReport(orgId, userId, 'amazon', today, metrics, { startDate, endDate })
+  return { success: true, ...metrics }
+}
+
+async function syncLinkedIn(
+  auth: PlatformAuth,
+  orgId: string,
+  userId: string,
+  startDate: string,
+  endDate: string,
+  today: Date
+) {
+  if (!auth.accessToken || !auth.accountId) {
+    return { error: 'Missing access token or account ID' }
+  }
+  const client = new LinkedInAdsClient({
+    accessToken: auth.accessToken,
+    accountId: auth.accountId,
+    refreshToken: auth.refreshToken || undefined,
+    clientId: auth.appId || undefined,
+    clientSecret: auth.appSecret || undefined,
+  })
+
+  const agg = await client.getAggregatedReport(startDate, endDate)
+  const metrics = { ...emptyMetrics(), ...agg }
+  await upsertReport(orgId, userId, 'linkedin', today, metrics, { startDate, endDate })
+  return { success: true, ...metrics }
+}
+
 // ---------------- Main handler ----------------
 
 export async function POST() {
@@ -388,6 +452,12 @@ export async function POST() {
             break
           case 'adjust':
             results.adjust = await syncAdjust(auth, org.id, user.id, startDate, endDate, today)
+            break
+          case 'amazon':
+            results.amazon = await syncAmazon(auth, org.id, user.id, startDate, endDate, today)
+            break
+          case 'linkedin':
+            results.linkedin = await syncLinkedIn(auth, org.id, user.id, startDate, endDate, today)
             break
           default:
             // Skip creative-only platforms (seedream, seedance, seedance2, etc.)

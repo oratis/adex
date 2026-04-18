@@ -26,7 +26,11 @@ const SECURITY_HEADERS: Record<string, string> = {
   //  - frame-ancestors 'none' mirrors X-Frame-Options DENY
   'Content-Security-Policy': [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    // 'unsafe-eval' is needed in dev for React HMR but harmless in prod
+    // (we double-toggle below based on NODE_ENV).
+    process.env.NODE_ENV === 'production'
+      ? "script-src 'self' 'unsafe-inline'"
+      : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https://storage.googleapis.com https://drive.google.com https://lh3.googleusercontent.com",
     "media-src 'self' https://storage.googleapis.com https://ark.cn-beijing.volces.com",

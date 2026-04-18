@@ -10,6 +10,8 @@ import { Tabs } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/toast'
 import { MembersPanel } from '@/components/members-panel'
 import { AuditPanel } from '@/components/audit-panel'
+import { SessionsPanel } from '@/components/sessions-panel'
+import { WebhooksPanel } from '@/components/webhooks-panel'
 import { api } from '@/lib/utils'
 
 interface PlatformAuth {
@@ -77,6 +79,28 @@ const PLATFORMS: PlatformConfig[] = [
     fields: [
       { key: 'apiKey', label: 'API Token', placeholder: 'Adjust API token', sensitive: true },
       { key: 'appId', label: 'App Token', placeholder: 'Adjust app token' },
+    ],
+  },
+  {
+    id: 'amazon', name: 'Amazon Ads', icon: '🟠',
+    description: 'Connect Amazon Advertising (Sponsored Products, Brands, Display)',
+    fields: [
+      { key: 'accountId', label: 'Profile ID', placeholder: 'Amazon Advertising profile ID' },
+      { key: 'appId', label: 'LWA Client ID', placeholder: 'amzn1.application-oa2-client.xxx' },
+      { key: 'appSecret', label: 'LWA Client Secret', placeholder: 'LWA client secret', sensitive: true },
+      { key: 'accessToken', label: 'Access Token', placeholder: 'LWA access token', sensitive: true },
+      { key: 'refreshToken', label: 'Refresh Token', placeholder: 'LWA refresh token (for auto-refresh)', sensitive: true },
+    ],
+  },
+  {
+    id: 'linkedin', name: 'LinkedIn Ads', icon: '🔷',
+    description: 'Connect LinkedIn Marketing Solutions',
+    fields: [
+      { key: 'accountId', label: 'Ad Account ID', placeholder: 'numeric id (e.g. 12345678)' },
+      { key: 'accessToken', label: 'Access Token', placeholder: 'OAuth access token', sensitive: true },
+      { key: 'appId', label: 'Client ID (optional)', placeholder: 'for auto-refresh' },
+      { key: 'appSecret', label: 'Client Secret (optional)', placeholder: 'for auto-refresh', sensitive: true },
+      { key: 'refreshToken', label: 'Refresh Token (optional)', placeholder: 'for auto-refresh', sensitive: true },
     ],
   },
   {
@@ -499,10 +523,16 @@ export default function SettingsPage() {
           content: <AuditPanel />,
         },
         {
+          id: 'webhooks',
+          label: 'Webhooks',
+          content: <WebhooksPanel />,
+        },
+        {
           id: 'account',
           label: 'Account',
           content: (
             <div className="space-y-4">
+              <SessionsPanel />
               <Card>
                 <CardHeader><CardTitle>Change Password</CardTitle></CardHeader>
                 <CardContent>

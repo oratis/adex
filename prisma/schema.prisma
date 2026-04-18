@@ -22,6 +22,24 @@ model User {
   reports       Report[]
   budgets       Budget[]
   memberships   OrgMembership[]
+  sessions      Session[]
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique     // SHA-256 of the signed token's payload portion
+  userAgent  String?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 // A workspace / team. Resources (Campaign, Creative, Budget, Report,
@@ -44,6 +62,27 @@ model Organization {
   platformAuths PlatformAuth[]
   assets        Asset[]
   auditEvents   AuditEvent[]
+  webhooks      Webhook[]
+}
+
+model Webhook {
+  id               String    @id @default(cuid())
+  orgId            String
+  url              String
+  secret           String    // HMAC signing secret
+  events           String    // comma-separated list of event keys
+  isActive         Boolean   @default(true)
+  lastDeliveredAt  DateTime?
+  lastStatusCode   Int?
+  lastError        String?
+  failureCount     Int       @default(0)
+  createdBy        String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
 }
 
 model OrgMembership {

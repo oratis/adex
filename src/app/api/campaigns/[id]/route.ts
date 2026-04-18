@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { logAudit } from '@/lib/audit'
+import { fireWebhook } from '@/lib/webhooks'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -57,6 +58,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       metadata: data.status ? { status: data.status } : { updatedFields: Object.keys(data) },
       req,
     })
+    if (data.status === 'paused' || data.status === 'active') {
+      fireWebhook({
+        orgId: org.id,
+        event: data.status === 'paused' ? 'campaign.paused' : 'campaign.resumed',
+        data: { campaignId: id, by: user.id },
+      }).catch(() => {})
+    }
 
     return NextResponse.json(campaign)
   } catch {
@@ -77,6 +85,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       targetId: id,
       req,
     })
+    fireWebhook({
+      orgId: org.id,
+      event: 'campaign.deleted',
+      data: { campaignId: id, by: user.id },
+    }).catch(() => {})
     return NextResponse.json({ ok: true })
   } catch {
     return NextResponse.json({ error: 'Failed to delete' }, { status: 500 })

@@ -1,6 +1,10 @@
 import { cookies } from 'next/headers'
 import { prisma } from './prisma'
 import crypto from 'crypto'
+import bcrypt from 'bcrypt'
+
+// bcrypt cost factor — 12 is a reasonable default for web apps in 2026
+const BCRYPT_ROUNDS = 12
 
 const TOKEN_SECRET =
   process.env.AUTH_TOKEN_SECRET ||
@@ -16,12 +20,62 @@ function getSecret(): string {
   return TOKEN_SECRET
 }
 
-export function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password).digest('hex')
+/**
+ * Hash a password with bcrypt. Sync signature for backward compatibility
+ * with existing call sites that don't await, but delegates to bcrypt
+ * async for security — callers MUST await this.
+ */
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, BCRYPT_ROUNDS)
 }
 
-export function verifyPassword(password: string, hash: string): boolean {
-  return hashPassword(password) === hash
+/**
+ * Verify a password against a stored hash. Transparently handles:
+ *  - bcrypt hashes (format: $2[aby]$...)
+ *  - Legacy raw SHA-256 hex (64 hex chars) from before 2026-04
+ * Returns { valid, needsUpgrade } — needsUpgrade=true if the stored hash
+ * is in the legacy format and the password verified, so the caller can
+ * rehash with bcrypt.
+ */
+export async function verifyPasswordDetailed(
+  password: string,
+  hash: string
+): Promise<{ valid: boolean; needsUpgrade: boolean }> {
+  if (hash.startsWith('$2')) {
+    const valid = await bcrypt.compare(password, hash)
+    return { valid, needsUpgrade: false }
+  }
+  // Legacy SHA-256
+  const legacy = crypto.createHash('sha256').update(password).digest('hex')
+  return { valid: legacy === hash, needsUpgrade: legacy === hash }
+}
+
+/**
+ * Back-compat wrapper — most routes just want boolean.
+ */
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return (await verifyPasswordDetailed(password, hash)).valid
+}
+
+/**
+ * Best-effort rehash: if a user's stored hash is still SHA-256 after a
+ * successful login, upgrade it in-place to bcrypt. Fire-and-forget.
+ */
+export async function rehashIfLegacy(
+  userId: string,
+  rawPassword: string,
+  currentHash: string
+): Promise<void> {
+  if (currentHash.startsWith('$2')) return
+  try {
+    const newHash = await hashPassword(rawPassword)
+    await prisma.user.update({
+      where: { id: userId },
+      data: { password: newHash },
+    })
+  } catch (err) {
+    console.error('[auth] bcrypt rehash failed:', err)
+  }
 }
 
 export function generateToken(): string {
@@ -29,8 +83,10 @@ export function generateToken(): string {
 }
 
 // HMAC-signed session token: base64url(payload).base64url(sig)
-// payload = { uid, iat, exp } as JSON
-type SessionPayload = { uid: string; iat: number; exp: number }
+// payload includes a session id (sid) so we can revoke individual
+// sessions server-side. Older tokens without sid (pre-v28) are still
+// accepted (stateless) to avoid logging everyone out on deploy.
+type SessionPayload = { uid: string; sid?: string; iat: number; exp: number }
 
 function b64urlEncode(buf: Buffer): string {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -47,12 +103,52 @@ function sign(data: string): string {
   )
 }
 
-export function signSessionToken(userId: string, ttlSeconds = 60 * 60 * 24 * 30): string {
+export function signSessionToken(
+  userId: string,
+  sessionId?: string,
+  ttlSeconds = 60 * 60 * 24 * 30
+): string {
   const now = Math.floor(Date.now() / 1000)
-  const payload: SessionPayload = { uid: userId, iat: now, exp: now + ttlSeconds }
+  const payload: SessionPayload = {
+    uid: userId,
+    ...(sessionId ? { sid: sessionId } : {}),
+    iat: now,
+    exp: now + ttlSeconds,
+  }
   const payloadStr = b64urlEncode(Buffer.from(JSON.stringify(payload)))
   const sig = sign(payloadStr)
   return `${payloadStr}.${sig}`
+}
+
+/**
+ * Create a Session row and return a signed token referencing it. This
+ * is the canonical login flow — every new cookie should come from here
+ * so sessions can be revoked.
+ */
+export async function createSession(opts: {
+  userId: string
+  userAgent?: string | null
+  ipAddress?: string | null
+  ttlSeconds?: number
+}): Promise<string> {
+  const ttl = opts.ttlSeconds ?? SESSION_MAX_AGE
+  const session = await prisma.session.create({
+    data: {
+      userId: opts.userId,
+      tokenHash: crypto.randomBytes(16).toString('hex'), // placeholder — we'll set below
+      userAgent: opts.userAgent ?? null,
+      ipAddress: opts.ipAddress ?? null,
+      expiresAt: new Date(Date.now() + ttl * 1000),
+    },
+  })
+  const token = signSessionToken(opts.userId, session.id, ttl)
+  // Store hash of the final signed token for audit/lookup
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex')
+  await prisma.session.update({
+    where: { id: session.id },
+    data: { tokenHash },
+  })
+  return token
 }
 
 export function verifySessionToken(token: string): SessionPayload | null {
@@ -80,16 +176,35 @@ export async function getCurrentUser() {
   const token = cookieStore.get('auth_token')?.value
   if (!token) return null
 
-  // New-format signed tokens
   const payload = verifySessionToken(token)
   if (payload) {
+    // If the token has a session id, verify the row isn't revoked.
+    // Tokens issued before the Session table exists have no sid and
+    // remain stateless (they'll naturally expire after 30 days).
+    if (payload.sid) {
+      const session = await prisma.session.findUnique({
+        where: { id: payload.sid },
+      })
+      if (!session || session.revokedAt || session.expiresAt < new Date()) {
+        return null
+      }
+      // Opportunistically refresh lastSeenAt (throttled: only if it's
+      // been more than a minute since the last update).
+      const since = Date.now() - session.lastSeenAt.getTime()
+      if (since > 60_000) {
+        prisma.session
+          .update({
+            where: { id: session.id },
+            data: { lastSeenAt: new Date() },
+          })
+          .catch(() => {})
+      }
+    }
     return prisma.user.findUnique({ where: { id: payload.uid } })
   }
 
-  // Legacy path: the cookie previously stored the raw user ID.
-  // Accept it ONLY if the value matches an existing user. This lets
-  // already-logged-in users keep their session until it's refreshed
-  // on next login. Remove after all clients have re-logged in.
+  // Legacy path: pre-signed-token cookies stored raw user ID.
+  // Accept only if it matches an existing user — migrated out on next login.
   if (/^[a-z0-9]{20,}$/i.test(token)) {
     const user = await prisma.user.findUnique({ where: { id: token } })
     return user
