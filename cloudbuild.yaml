@@ -23,6 +23,10 @@ substitutions:
   _MAX_INSTANCES: '1'
   _SECRETS: ''            # comma-separated env=secret pairs (Secret Manager)
   _SERVICE_ACCOUNT: ''    # blank → keep current Cloud Run runtime SA
+  # Image tag — override per-deploy with --substitutions=_TAG=<git-sha>.
+  # Defaults to 'latest' for manual `gcloud builds submit` invocations and
+  # for triggers configured to pass --substitutions=_TAG=$SHORT_SHA.
+  _TAG: latest
 
 steps:
   - id: build-image
@@ -30,7 +34,7 @@ steps:
     args:
       - build
       - --tag
-      - gcr.io/$PROJECT_ID/${_SERVICE}:$SHORT_SHA
+      - gcr.io/$PROJECT_ID/${_SERVICE}:${_TAG}
       - --tag
       - gcr.io/$PROJECT_ID/${_SERVICE}:latest
       - .
@@ -51,7 +55,7 @@ steps:
         set -euo pipefail
         DEPLOY_ARGS=(
           run deploy "${_SERVICE}"
-          --image "gcr.io/$PROJECT_ID/${_SERVICE}:$SHORT_SHA"
+          --image "gcr.io/$PROJECT_ID/${_SERVICE}:${_TAG}"
           --region "${_REGION}"
           --platform managed
           --allow-unauthenticated
@@ -72,7 +76,7 @@ steps:
         gcloud "${DEPLOY_ARGS[@]}"
 
 images:
-  - gcr.io/$PROJECT_ID/${_SERVICE}:$SHORT_SHA
+  - gcr.io/$PROJECT_ID/${_SERVICE}:${_TAG}
   - gcr.io/$PROJECT_ID/${_SERVICE}:latest
 
 options:
