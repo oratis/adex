@@ -5,6 +5,8 @@ import { getCurrentUser, getCurrentOrg } from '@/lib/auth'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { RollbackButton } from './rollback-button'
+import { describeDecision, toolLabel, statusLabel } from '@/lib/humanize'
+import { formatInTimezone } from '@/lib/time'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,6 +50,14 @@ export default async function DecisionDetailPage({
 
   const isAdmin = ctx.role === 'owner' || ctx.role === 'admin'
   const hasReversibleSteps = decision.steps.some((s) => s.reversible)
+  const tz = user.timezone || 'UTC'
+  const summary = describeDecision({
+    rationale: decision.rationale,
+    severity: decision.severity,
+    status: decision.status,
+    toolNames: decision.steps.map((s) => s.toolName),
+    outcome: decision.outcome?.classification,
+  })
 
   return (
     <div className="space-y-6">
@@ -58,6 +68,14 @@ export default async function DecisionDetailPage({
         <h1 className="text-2xl font-bold mt-2">Decision detail</h1>
         <p className="font-mono text-xs text-gray-500 mt-1">{decision.id}</p>
       </div>
+
+      {/* Plain-language summary at the top — no JSON, no jargon. */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-base leading-relaxed">{summary.zh}</div>
+          <div className="text-xs text-gray-500 mt-1">{summary.en}</div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className="p-4 space-y-3">
@@ -85,12 +103,12 @@ export default async function DecisionDetailPage({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
             <div>
               <div className="text-gray-500 uppercase">Created</div>
-              <div>{decision.createdAt.toLocaleString()}</div>
+              <div>{formatInTimezone(decision.createdAt, tz)}</div>
             </div>
             {decision.executedAt && (
               <div>
                 <div className="text-gray-500 uppercase">Executed</div>
-                <div>{decision.executedAt.toLocaleString()}</div>
+                <div>{formatInTimezone(decision.executedAt, tz)}</div>
               </div>
             )}
             <div>
@@ -131,8 +149,10 @@ export default async function DecisionDetailPage({
           {decision.steps.map((s) => (
             <div key={s.id} className="border rounded p-3 text-xs space-y-2">
               <div className="flex items-center gap-2">
-                <Badge>{s.toolName}</Badge>
-                <Badge className={STATUS_COLORS[s.status] || ''}>{s.status}</Badge>
+                <Badge title={s.toolName}>{toolLabel(s.toolName).zh}</Badge>
+                <Badge className={STATUS_COLORS[s.status] || ''}>
+                  {statusLabel(s.status).zh}
+                </Badge>
                 {s.reversible && (
                   <Badge className="bg-blue-50 text-blue-700">reversible</Badge>
                 )}
@@ -191,7 +211,7 @@ export default async function DecisionDetailPage({
               </div>
               <div>
                 <div className="text-gray-500 uppercase">Measured at</div>
-                <div>{decision.outcome.measuredAt.toLocaleString()}</div>
+                <div>{formatInTimezone(decision.outcome.measuredAt, tz)}</div>
               </div>
               <div>
                 <div className="text-gray-500 uppercase">Classification</div>

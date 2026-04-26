@@ -66,6 +66,22 @@ export function CostClient() {
     ? (data.monthlySpentUsd / data.monthlyBudgetUsd) * 100
     : 0
 
+  // Linear projection: at the current daily burn rate, when do we hit cap?
+  function projectExhaustion(): { dailyBurn: number; daysLeft: number; projectedMonthEndSpend: number } | null {
+    if (!data || data.perDay.length === 0) return null
+    const now = new Date()
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+    const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0))
+    const daysSoFar = Math.max(1, Math.floor((Date.now() - monthStart.getTime()) / 86_400_000))
+    const dailyBurn = data.monthlySpentUsd / daysSoFar
+    const remainingBudget = data.monthlyBudgetUsd - data.monthlySpentUsd
+    const daysLeft = dailyBurn > 0 ? remainingBudget / dailyBurn : Infinity
+    const totalDays = Math.ceil((monthEnd.getTime() - monthStart.getTime()) / 86_400_000) + 1
+    const projectedMonthEndSpend = dailyBurn * totalDays
+    return { dailyBurn, daysLeft, projectedMonthEndSpend }
+  }
+  const projection = projectExhaustion()
+
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4">
@@ -131,6 +147,40 @@ export function CostClient() {
               </CardContent>
             </Card>
           </div>
+
+          {projection && projection.dailyBurn > 0 && (
+            <Card
+              className={
+                projection.projectedMonthEndSpend > data.monthlyBudgetUsd
+                  ? 'border-amber-300 bg-amber-50'
+                  : ''
+              }
+            >
+              <CardContent className="py-4 grid grid-cols-3 gap-3">
+                <div>
+                  <div className="text-xs uppercase text-gray-500">Daily burn · 日均</div>
+                  <div className="text-lg font-bold">${projection.dailyBurn.toFixed(2)}</div>
+                </div>
+                <div>
+                  <div className="text-xs uppercase text-gray-500">Projected month-end · 预计月底</div>
+                  <div className="text-lg font-bold">${projection.projectedMonthEndSpend.toFixed(2)}</div>
+                  {projection.projectedMonthEndSpend > data.monthlyBudgetUsd && (
+                    <div className="text-xs text-amber-700">
+                      Over budget by ${(projection.projectedMonthEndSpend - data.monthlyBudgetUsd).toFixed(2)}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div className="text-xs uppercase text-gray-500">Days until cap · 距离触顶</div>
+                  <div className="text-lg font-bold">
+                    {Number.isFinite(projection.daysLeft)
+                      ? `${projection.daysLeft.toFixed(0)}d`
+                      : '—'}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>

@@ -13,6 +13,10 @@ model User {
   name          String?
   password      String
   dailyReportEmail String?
+  // IANA timezone (e.g. "Asia/Shanghai", "America/Los_Angeles"). Used for
+  // displaying timestamps and for the `agent_active_hours` guardrail.
+  // Defaults to UTC; UI will offer a picker.
+  timezone         String   @default("UTC")
   // Platform-level admin (different from org-level admin/owner). Can issue
   // invite codes + promote/demote other platform admins. Defaults to false;
   // bootstrap admin via PLATFORM_ADMIN_EMAILS env var (see auth.ts
@@ -39,6 +43,9 @@ model InviteCode {
   code        String    @unique  // human-shareable token (e.g. "INVT-ABCD-1234")
   createdBy   String                       // userId of issuing admin
   note        String?                      // optional admin memo (who is this for)
+  // Optional batch label — admins issue codes in named batches like
+  // "spring-2026 partner pilot" so multi-admin orgs can track ownership.
+  batchLabel  String?
   expiresAt   DateTime?                    // null = never expires
   usedAt      DateTime?
   usedByUserId String?  @unique            // 1:1 — single-use
@@ -50,6 +57,7 @@ model InviteCode {
 
   @@index([createdBy])
   @@index([expiresAt, usedAt, revokedAt])
+  @@index([batchLabel])
 }
 
 model Session {

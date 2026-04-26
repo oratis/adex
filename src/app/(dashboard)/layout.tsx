@@ -7,6 +7,7 @@ import {
   isPlatformAdmin,
 } from '@/lib/auth'
 import { ToastProvider } from '@/components/ui/toast'
+import { CommandPalette } from '@/components/layout/command-palette'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser()
@@ -33,6 +34,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <main className="flex-1 p-8 overflow-auto">
           {children}
         </main>
+        <CommandPalette />
       </div>
     </ToastProvider>
   )

@@ -3,6 +3,7 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { describeAuditEvent, actionLabel } from '@/lib/humanize'
 
 type Event = {
   id: string
@@ -96,24 +97,31 @@ export function AuditClient({
       {events.length === 0 && <p className="text-sm text-gray-500">No matching events.</p>}
 
       <div className="space-y-2">
-        {events.map((e) => (
+        {events.map((e) => {
+          const sentence = describeAuditEvent({
+            action: e.action,
+            userName: e.userId ? e.userId.slice(0, 8) : null,
+            targetType: e.targetType,
+            targetSummary: e.targetId ? e.targetId.slice(0, 8) : null,
+          })
+          const a = actionLabel(e.action)
+          return (
           <Card key={e.id}>
             <CardContent className="p-3 text-xs">
               <div className="flex items-center gap-2 flex-wrap">
-                <Badge className={ACTION_COLORS[e.action] || 'bg-gray-100 text-gray-700'}>
-                  {e.action}
+                <Badge
+                  className={ACTION_COLORS[e.action] || 'bg-gray-100 text-gray-700'}
+                  title={e.action}
+                >
+                  {a.zh}
                 </Badge>
-                {e.targetType && (
-                  <Badge className="bg-gray-100 text-gray-600">
-                    {e.targetType}{e.targetId ? `:${e.targetId.slice(0, 8)}` : ''}
-                  </Badge>
-                )}
-                {e.userId && <span className="text-gray-500">by {e.userId.slice(0, 8)}</span>}
-                {e.ipAddress && <span className="text-gray-400">from {e.ipAddress}</span>}
+                {e.ipAddress && <span className="text-gray-400">{e.ipAddress}</span>}
                 <span className="text-gray-400 ml-auto">
                   {new Date(e.createdAt).toLocaleString()}
                 </span>
               </div>
+              <div className="mt-1.5 text-sm text-gray-900">{sentence.zh}</div>
+              <div className="text-[10px] text-gray-400">{sentence.en}</div>
               {e.metadata && (
                 <details className="mt-1">
                   <summary className="cursor-pointer text-gray-500">metadata</summary>
@@ -124,7 +132,8 @@ export function AuditClient({
               )}
             </CardContent>
           </Card>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

@@ -19,6 +19,7 @@ export default async function GuardrailsPage() {
   return (
     <GuardrailsClient
       role={ctx.role}
+      userTimezone={user.timezone || 'UTC'}
       initial={rows.map((r) => ({
         id: r.id,
         scope: r.scope,

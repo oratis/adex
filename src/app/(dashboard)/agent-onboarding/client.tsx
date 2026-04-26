@@ -255,6 +255,60 @@ export function OnboardingClient({
           </div>
         </CardContent>
       </Card>
+
+      <Card className="border-rose-200">
+        <CardHeader>
+          <CardTitle className="text-rose-700">Decommission · 永久停用</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <p className="text-gray-700">
+            完全停用此 org 的 Agent — 关 enabled、回到 shadow mode、拒掉所有挂起审批、清除 autonomous 白名单。
+            <strong className="text-rose-700"> 不会删除任何历史数据</strong>（Decision / Outcome / PromptRun / Guardrail 全部保留），方便审计 / 之后再启用。
+            <br />Owner 专属。
+          </p>
+          {isOwner && (
+            <Button
+              variant="outline"
+              className="border-rose-300 text-rose-700 hover:bg-rose-50"
+              onClick={async () => {
+                if (
+                  !confirm(
+                    'Decommission the agent for this workspace?\n\n' +
+                      '- enabled → false\n' +
+                      '- mode → shadow\n' +
+                      '- All pending approvals → rejected\n' +
+                      '- Autonomous allowlist → revoked\n\n' +
+                      'Historical records (decisions, outcomes, prompt runs, guardrails) are kept for audit.'
+                  )
+                )
+                  return
+                setBusy(true)
+                try {
+                  const res = await fetch(api('/api/agent/decommission'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirm: 'DISABLE_AGENT' }),
+                  })
+                  const data = await res.json()
+                  if (!res.ok) {
+                    setErr(data.error || `${res.status}`)
+                  } else {
+                    alert(
+                      `Decommissioned.\nPending approvals rejected: ${data.pendingRejected}\nKept for audit: ${data.archive.decisionCount} decisions, ${data.archive.outcomeCount} outcomes, ${data.archive.promptRunCount} prompt runs.`
+                    )
+                    window.location.reload()
+                  }
+                } finally {
+                  setBusy(false)
+                }
+              }}
+              disabled={busy}
+            >
+              {busy ? 'Working…' : 'Decommission agent (owner only)'}
+            </Button>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}))
   const note = typeof body.note === 'string' ? body.note.slice(0, 200) : null
+  const batchLabel = typeof body.batchLabel === 'string' ? body.batchLabel.slice(0, 100) : null
   const count = Math.min(Math.max(Number(body.count) || 1, 1), 50)
   const expiresInDays = Number(body.expiresInDays)
   const expiresAt =
@@ -80,6 +81,7 @@ export async function POST(req: NextRequest) {
             code: generateInviteCode(),
             createdBy: admin.id,
             note,
+            batchLabel,
             expiresAt,
           },
         })

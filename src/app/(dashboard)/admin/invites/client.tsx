@@ -37,7 +37,7 @@ export function InvitesClient({
   const [codes, setCodes] = useState(initial)
   const [busy, setBusy] = useState<string | null>(null)
   const [showNew, setShowNew] = useState(false)
-  const [draft, setDraft] = useState({ note: '', expiresInDays: '', count: '1' })
+  const [draft, setDraft] = useState({ note: '', batchLabel: '', expiresInDays: '', count: '1' })
 
   function setStatus(s: string) {
     const url = new URL(window.location.href)
@@ -51,6 +51,7 @@ export function InvitesClient({
     try {
       const body: Record<string, unknown> = {}
       if (draft.note.trim()) body.note = draft.note.trim()
+      if (draft.batchLabel.trim()) body.batchLabel = draft.batchLabel.trim()
       const exp = Number(draft.expiresInDays)
       if (Number.isFinite(exp) && exp > 0) body.expiresInDays = exp
       const count = Number(draft.count)
@@ -67,7 +68,7 @@ export function InvitesClient({
       }
       setCodes([...(data.created as Code[]), ...codes])
       setShowNew(false)
-      setDraft({ note: '', expiresInDays: '', count: '1' })
+      setDraft({ note: '', batchLabel: '', expiresInDays: '', count: '1' })
     } finally {
       setBusy(null)
     }
@@ -146,7 +147,18 @@ export function InvitesClient({
                 />
               </label>
               <label className="block col-span-3">
-                Note (optional, e.g. &quot;for partner pilot&quot;)
+                Batch label · 批次名称 (optional, e.g. &quot;spring-2026 partner pilot&quot;)
+                <Input
+                  value={draft.batchLabel}
+                  onChange={(e) => setDraft({ ...draft, batchLabel: e.target.value })}
+                  className="mt-1"
+                />
+                <span className="text-xs text-gray-500">
+                  All codes generated in this submission share this label, so you can group + filter later.
+                </span>
+              </label>
+              <label className="block col-span-3">
+                Note (optional, per-code memo)
                 <Input
                   value={draft.note}
                   onChange={(e) => setDraft({ ...draft, note: e.target.value })}

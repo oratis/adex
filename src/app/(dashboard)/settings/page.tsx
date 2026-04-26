@@ -130,7 +130,7 @@ export default function SettingsPage() {
   const [deleting, setDeleting] = useState(false)
   const [formData, setFormData] = useState<Record<string, Record<string, string>>>({})
   const [saving, setSaving] = useState<string | null>(null)
-  const [profile, setProfile] = useState({ name: '', dailyReportEmail: '' })
+  const [profile, setProfile] = useState({ name: '', dailyReportEmail: '', timezone: 'UTC' })
   const [savingProfile, setSavingProfile] = useState(false)
   const [googleAccounts, setGoogleAccounts] = useState<Array<{ id: string; name: string }>>([])
   const [loadingAccounts, setLoadingAccounts] = useState(false)
@@ -167,7 +167,7 @@ export default function SettingsPage() {
   useEffect(() => {
     loadAuths()
     fetch(api('/api/auth/me')).then(r => r.json()).then(data => {
-      if (data.name !== undefined) setProfile({ name: data.name || '', dailyReportEmail: data.dailyReportEmail || '' })
+      if (data.name !== undefined) setProfile({ name: data.name || '', dailyReportEmail: data.dailyReportEmail || '', timezone: data.timezone || 'UTC' })
     })
 
     // Check for OAuth callback results
@@ -495,7 +495,7 @@ export default function SettingsPage() {
                     <Input value={profile.name} onChange={e => setProfile(p => ({ ...p, name: e.target.value }))} />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-1">Daily Report Email</label>
+                    <label className="block text-sm font-medium mb-1">Daily Report Email · 每日报告邮箱</label>
                     <Input
                       type="email"
                       value={profile.dailyReportEmail}
@@ -503,6 +503,33 @@ export default function SettingsPage() {
                       placeholder="Receive daily performance reports at this email"
                     />
                     <p className="text-xs text-gray-500 mt-1">Leave empty to disable daily reports.</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Timezone · 时区</label>
+                    <select
+                      value={profile.timezone}
+                      onChange={e => setProfile(p => ({ ...p, timezone: e.target.value }))}
+                      className="block w-full border rounded px-2 py-2"
+                    >
+                      <option value="UTC">UTC (协调世界时)</option>
+                      <option value="Asia/Shanghai">Asia/Shanghai · 北京时间</option>
+                      <option value="Asia/Tokyo">Asia/Tokyo · 东京</option>
+                      <option value="Asia/Singapore">Asia/Singapore · 新加坡</option>
+                      <option value="Asia/Kolkata">Asia/Kolkata · 印度</option>
+                      <option value="Europe/London">Europe/London · 伦敦</option>
+                      <option value="Europe/Paris">Europe/Paris · 巴黎</option>
+                      <option value="Europe/Berlin">Europe/Berlin · 柏林</option>
+                      <option value="America/New_York">America/New_York · 纽约</option>
+                      <option value="America/Chicago">America/Chicago · 芝加哥</option>
+                      <option value="America/Denver">America/Denver · 丹佛</option>
+                      <option value="America/Los_Angeles">America/Los_Angeles · 洛杉矶</option>
+                      <option value="Australia/Sydney">Australia/Sydney · 悉尼</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Used for displaying timestamps + the agent_active_hours guardrail.
+                      <br />
+                      时间戳显示 + agent_active_hours 规则按这个时区。
+                    </p>
                   </div>
                   <Button type="submit" disabled={savingProfile}>
                     {savingProfile ? 'Saving...' : 'Save Settings'}

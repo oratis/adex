@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { cn, api } from '@/lib/utils'
 import { useTheme } from '@/components/theme-provider'
+import { NotificationBell } from './notification-bell'
 import { useT } from '@/components/i18n-provider'
 import { LOCALES, LOCALE_LABELS, type Locale } from '@/lib/i18n'
 
@@ -221,6 +222,9 @@ export function Sidebar({
             {t('nav.signed_in_as')} <span className="text-gray-300">{userName}</span>
           </div>
         )}
+        <div className="px-3 flex justify-end">
+          <NotificationBell />
+        </div>
         <div className="flex gap-1 px-3">
           {LOCALES.map((l: Locale) => (
             <button

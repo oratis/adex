@@ -139,10 +139,16 @@ export function ApprovalsClient({
         </div>
       )}
 
-      {list.map((a) => (
-        <Card key={a.id}>
+      {sortByUrgency(list).map((a) => {
+        const stripe = SEVERITY_STRIPE[a.decision.severity] || 'border-l-gray-300'
+        const elapsedH = (Date.now() - new Date(a.createdAt).getTime()) / 3_600_000
+        const remainingH = (new Date(a.expiresAt).getTime() - Date.now()) / 3_600_000
+        const isStale = elapsedH > 24
+        const isExpiring = remainingH < 12 && remainingH > 0
+        return (
+        <Card key={a.id} className={`border-l-4 ${stripe}`}>
           <CardContent className="p-4 space-y-3">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {isAdmin && (
                 <input
                   type="checkbox"
@@ -154,6 +160,14 @@ export function ApprovalsClient({
               <Badge className={SEVERITY_COLORS[a.decision.severity] || ''}>
                 {a.decision.severity}
               </Badge>
+              {isStale && (
+                <Badge className="bg-amber-100 text-amber-700">⏱ {elapsedH.toFixed(0)}h old</Badge>
+              )}
+              {isExpiring && (
+                <Badge className="bg-rose-100 text-rose-700">
+                  ⚠ expires in {remainingH.toFixed(0)}h
+                </Badge>
+              )}
               <span className="text-xs text-gray-500">
                 created {new Date(a.createdAt).toLocaleString()} · expires{' '}
                 {new Date(a.expiresAt).toLocaleString()}
@@ -199,7 +213,27 @@ export function ApprovalsClient({
             )}
           </CardContent>
         </Card>
-      ))}
+        )
+      })}
     </div>
   )
+}
+
+const SEVERITY_RANK: Record<string, number> = { alert: 0, warning: 1, opportunity: 2, info: 3 }
+
+const SEVERITY_STRIPE: Record<string, string> = {
+  alert: 'border-l-rose-500',
+  warning: 'border-l-amber-500',
+  opportunity: 'border-l-emerald-500',
+  info: 'border-l-gray-300',
+}
+
+function sortByUrgency(items: Approval[]): Approval[] {
+  return [...items].sort((a, b) => {
+    const sa = SEVERITY_RANK[a.decision.severity] ?? 99
+    const sb = SEVERITY_RANK[b.decision.severity] ?? 99
+    if (sa !== sb) return sa - sb
+    // Same severity → older = more urgent (about to expire)
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  })
 }

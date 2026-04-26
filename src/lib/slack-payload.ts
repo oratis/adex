@@ -53,16 +53,35 @@ export function buildSlackPayload(opts: {
     blocks.push({ type: 'section', fields: fields.slice(0, 10) })
   }
   if (event.startsWith('agent.') || event === 'ad.policy_rejected') {
-    blocks.push({
-      type: 'actions',
-      elements: [
+    const elements: Array<Record<string, unknown>> = [
+      {
+        type: 'button',
+        text: { type: 'plain_text', text: 'Open Adex' },
+        url: link(event.startsWith('agent.approval') ? '/approvals' : '/decisions'),
+      },
+    ]
+    // For approval requests, expose interactive Approve / Reject buttons
+    // bound to /api/integrations/slack/interactive (configure in Slack app
+    // Interactivity & Shortcuts → Request URL).
+    if (event === 'agent.approval.requested' && typeof data.decisionId === 'string') {
+      elements.unshift(
         {
           type: 'button',
-          text: { type: 'plain_text', text: 'Open Adex' },
-          url: link(event.startsWith('agent.approval') ? '/approvals' : '/decisions'),
+          text: { type: 'plain_text', text: 'Approve' },
+          style: 'primary',
+          action_id: `approve_decision_${data.decisionId}`,
+          value: data.decisionId,
         },
-      ],
-    })
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Reject' },
+          style: 'danger',
+          action_id: `reject_decision_${data.decisionId}`,
+          value: data.decisionId,
+        }
+      )
+    }
+    blocks.push({ type: 'actions', elements })
   }
 
   return {

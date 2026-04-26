@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { api } from '@/lib/utils'
+import { EmptyState } from '@/components/ui/empty-state'
 
 type AgentConfig = {
   enabled: boolean
@@ -82,6 +83,7 @@ export function DecisionsClient({
   const [running, setRunning] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [campaignDraft, setCampaignDraft] = useState(filter.campaignId || '')
   const isAdmin = role === 'owner' || role === 'admin'
 
@@ -277,14 +279,72 @@ export function DecisionsClient({
         )}
       </div>
 
+      {isAdmin && selected.size > 0 && (
+        <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+          <span className="text-gray-700 mr-auto">{selected.size} selected</span>
+          <Button
+            onClick={async () => {
+              const reversibleIds = decisions
+                .filter((d) => selected.has(d.id) && d.status === 'executed' && d.steps.some((s) => s.reversible))
+                .map((d) => d.id)
+              if (reversibleIds.length === 0) {
+                alert('None of the selected decisions are reversible (need executed status + reversible step).')
+                return
+              }
+              if (!confirm(`Roll back ${reversibleIds.length} decision(s)?`)) return
+              const res = await fetch(api('/api/agent/decisions/bulk-rollback'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: reversibleIds }),
+              })
+              const data = await res.json()
+              const ok = (data.results || []).filter((r: { ok: boolean }) => r.ok).length
+              alert(`Rolled back ${ok} / ${reversibleIds.length}. Reload to see updated state.`)
+              window.location.reload()
+            }}
+          >
+            Roll back selected
+          </Button>
+          <Button variant="ghost" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
+
       <div className="space-y-3">
         {decisions.length === 0 && (
-          <p className="text-gray-500 text-sm">No decisions matching filter. Hit &ldquo;Run now&rdquo; or wait for the cron tick.</p>
+          <EmptyState
+            emoji="🧠"
+            title="No agent decisions yet · 还没有决策"
+            description={
+              <>
+                Either the agent isn&apos;t enabled, or it hasn&apos;t found anything to act on this hour.
+                <br />
+                Agent 还没启用，或者本小时没什么可处理的。
+              </>
+            }
+            primaryAction={{ label: 'Run now', onClick: () => runNow() }}
+            secondaryAction={{ label: 'Open onboarding', href: '/agent-onboarding' }}
+          />
         )}
         {decisions.map((d) => (
           <Card key={d.id}>
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-4">
+                {isAdmin && (
+                  <input
+                    type="checkbox"
+                    checked={selected.has(d.id)}
+                    onChange={() => {
+                      const next = new Set(selected)
+                      if (next.has(d.id)) next.delete(d.id)
+                      else next.add(d.id)
+                      setSelected(next)
+                    }}
+                    className="mt-1"
+                    aria-label={`Select decision ${d.id}`}
+                  />
+                )}
                 <div className="flex-1">
                   <div className="flex flex-wrap items-center gap-2 mb-2">
                     <Badge className={SEVERITY_COLORS[d.severity] || ''}>{d.severity}</Badge>
