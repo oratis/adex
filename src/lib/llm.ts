@@ -96,3 +96,112 @@ export async function completeJSON<T = unknown>(
 export function isLLMConfigured(): boolean {
   return !!process.env.ANTHROPIC_API_KEY
 }
+
+/**
+ * Anthropic Tool Use call with optional prompt-caching markers.
+ *
+ * Caller defines a single "structured output" tool whose input_schema
+ * captures the desired response shape. We force the model to call it via
+ * `tool_choice: { type: 'tool', name: tool.name }`. The model's tool_use
+ * input is returned as the parsed structured response — no prose, no JSON
+ * fences, no extraction heuristics.
+ *
+ * `cachedSystem` (if provided) is sent as a SystemBlock with
+ * `cache_control: { type: 'ephemeral' }` so static prompt + tool catalog
+ * are reused across calls. Anthropic charges write-once / read-many for
+ * cached blocks, so plan() amortizes cost across cycles within the cache TTL.
+ */
+export type StructuredTool<T> = {
+  name: string
+  description: string
+  input_schema: Record<string, unknown>
+}
+
+export type ToolUseResult<T> = {
+  parsed: T
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreateTokens: number
+  requestId?: string
+}
+
+export async function completeWithStructuredTool<T = unknown>(opts: {
+  tool: StructuredTool<T>
+  user: string
+  cachedSystem?: string
+  freshSystem?: string
+  maxTokens?: number
+  temperature?: number
+}): Promise<ToolUseResult<T>> {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) throw new LLMNotConfigured()
+
+  const systemBlocks: Array<Record<string, unknown>> = []
+  if (opts.cachedSystem) {
+    systemBlocks.push({
+      type: 'text',
+      text: opts.cachedSystem,
+      cache_control: { type: 'ephemeral' },
+    })
+  }
+  if (opts.freshSystem) {
+    systemBlocks.push({ type: 'text', text: opts.freshSystem })
+  }
+
+  const body = {
+    model: DEFAULT_MODEL,
+    max_tokens: opts.maxTokens ?? 2048,
+    temperature: opts.temperature ?? 0.3,
+    ...(systemBlocks.length > 0 ? { system: systemBlocks } : {}),
+    tools: [opts.tool],
+    tool_choice: { type: 'tool', name: opts.tool.name },
+    messages: [{ role: 'user', content: opts.user }],
+  }
+
+  const res = await fetch(ANTHROPIC_URL, {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'prompt-caching-2024-07-31',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '')
+    throw new Error(`Anthropic Tool Use ${res.status}: ${errBody.slice(0, 400)}`)
+  }
+
+  const data = (await res.json()) as {
+    id?: string
+    model?: string
+    content: Array<{ type: string; name?: string; input?: unknown; text?: string }>
+    usage?: {
+      input_tokens?: number
+      output_tokens?: number
+      cache_read_input_tokens?: number
+      cache_creation_input_tokens?: number
+    }
+  }
+  const block = data.content.find((c) => c.type === 'tool_use' && c.name === opts.tool.name)
+  if (!block || block.input == null) {
+    throw new Error(
+      `Tool Use API did not return a "${opts.tool.name}" tool_use block. Got types: ${data.content
+        .map((c) => c.type)
+        .join(', ')}`
+    )
+  }
+  return {
+    parsed: block.input as T,
+    model: data.model || DEFAULT_MODEL,
+    inputTokens: data.usage?.input_tokens ?? 0,
+    outputTokens: data.usage?.output_tokens ?? 0,
+    cacheReadTokens: data.usage?.cache_read_input_tokens ?? 0,
+    cacheCreateTokens: data.usage?.cache_creation_input_tokens ?? 0,
+    requestId: data.id,
+  }
+}

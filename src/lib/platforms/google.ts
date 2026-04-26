@@ -208,4 +208,105 @@ export class GoogleAdsClient {
     })
     return (await safeJson(res)).data
   }
+
+  /**
+   * Create an ad group inside an existing campaign. Defaults the bid type
+   * to MANUAL_CPC + cpcBidMicros = $1 unless caller provides otherwise; that
+   * matches what most "starter" campaigns expect and keeps the Display
+   * channel from rejecting the create.
+   */
+  async createAdGroup(
+    customerId: string,
+    params: { campaignId: string; name: string; cpcBidMicros?: number; status?: 'ENABLED' | 'PAUSED' }
+  ) {
+    const cid = customerId.replace(/[-\s]/g, '')
+    const res = await fetch(`${ADS_API_BASE}/customers/${cid}/adGroups:mutate`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({
+        operations: [
+          {
+            create: {
+              name: params.name,
+              campaign: `customers/${cid}/campaigns/${params.campaignId}`,
+              status: params.status || 'PAUSED',
+              type: 'DISPLAY_STANDARD',
+              cpcBidMicros: String(params.cpcBidMicros ?? 1_000_000),
+            },
+          },
+        ],
+      }),
+    })
+    const result = await safeJson(res)
+    if (!result.ok) {
+      throw new Error(
+        `Google createAdGroup ${result.status}: ${result.text.substring(0, 300)}`
+      )
+    }
+    return result.data as { results?: Array<{ resourceName?: string }> } | null
+  }
+
+  /**
+   * Create a responsive display ad inside an ad group. Headline + description
+   * are required by Google's API; we pass single-element arrays for the
+   * minimal viable payload.
+   */
+  async createAd(
+    customerId: string,
+    params: {
+      adGroupId: string
+      name?: string
+      headline: string
+      description: string
+      finalUrl: string
+      businessName?: string
+      marketingImageUrl?: string
+      squareMarketingImageUrl?: string
+      logoImageUrl?: string
+    }
+  ) {
+    const cid = customerId.replace(/[-\s]/g, '')
+    const adGroupResource = `customers/${cid}/adGroups/${params.adGroupId}`
+    const responsiveDisplayAd: Record<string, unknown> = {
+      headlines: [{ text: params.headline.slice(0, 30) }],
+      descriptions: [{ text: params.description.slice(0, 90) }],
+      longHeadline: { text: params.headline.slice(0, 90) },
+      businessName: params.businessName || params.headline.slice(0, 25),
+    }
+    if (params.marketingImageUrl) {
+      responsiveDisplayAd.marketingImages = [{ asset: params.marketingImageUrl }]
+    }
+    if (params.squareMarketingImageUrl) {
+      responsiveDisplayAd.squareMarketingImages = [{ asset: params.squareMarketingImageUrl }]
+    }
+    if (params.logoImageUrl) {
+      responsiveDisplayAd.logoImages = [{ asset: params.logoImageUrl }]
+    }
+    const res = await fetch(`${ADS_API_BASE}/customers/${cid}/adGroupAds:mutate`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({
+        operations: [
+          {
+            create: {
+              adGroup: adGroupResource,
+              status: 'PAUSED',
+              ad: {
+                name: params.name,
+                finalUrls: [params.finalUrl],
+                responsiveDisplayAd,
+              },
+            },
+          },
+        ],
+      }),
+    })
+    const result = await safeJson(res)
+    if (!result.ok) {
+      throw new Error(
+        `Google createAd ${result.status}: ${result.text.substring(0, 300)}`
+      )
+    }
+    return result.data as { results?: Array<{ resourceName?: string }> } | null
+  }
 }

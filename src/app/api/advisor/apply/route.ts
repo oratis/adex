@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { logAudit } from '@/lib/audit'
+import { applyCampaignStatusChange } from '@/lib/platforms/apply-status'
+import { PlatformError } from '@/lib/platforms/adapter'
 
 /**
  * Apply a safe, reversible advisor action. We deliberately restrict to
@@ -45,70 +47,53 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Campaign not found in current org' }, { status: 404 })
     }
 
-    switch (action) {
-      case 'pause_campaign': {
-        if (campaign.status !== 'active') {
-          return NextResponse.json(
-            { error: `Campaign is ${campaign.status}, cannot pause` },
-            { status: 400 }
-          )
-        }
-        await prisma.campaign.update({
-          where: { id: campaign.id },
-          data: { status: 'paused' },
-        })
-        await logAudit({
-          orgId: org.id,
-          userId: user.id,
-          action: 'advisor.apply',
-          targetType: 'campaign',
-          targetId: campaign.id,
-          metadata: { applied: 'pause_campaign', name: campaign.name },
-          req,
-        })
-        return NextResponse.json({
-          ok: true,
-          message: `Paused "${campaign.name}"`,
-          campaign: { id: campaign.id, status: 'paused' },
-        })
-      }
-
-      case 'resume_campaign': {
-        if (campaign.status !== 'paused') {
-          return NextResponse.json(
-            { error: `Campaign is ${campaign.status}, cannot resume` },
-            { status: 400 }
-          )
-        }
-        await prisma.campaign.update({
-          where: { id: campaign.id },
-          data: { status: 'active' },
-        })
-        await logAudit({
-          orgId: org.id,
-          userId: user.id,
-          action: 'advisor.apply',
-          targetType: 'campaign',
-          targetId: campaign.id,
-          metadata: { applied: 'resume_campaign', name: campaign.name },
-          req,
-        })
-        return NextResponse.json({
-          ok: true,
-          message: `Resumed "${campaign.name}"`,
-          campaign: { id: campaign.id, status: 'active' },
-        })
-      }
-
-      default:
-        return NextResponse.json(
-          {
-            error: 'Unsupported action',
-            supported: ['pause_campaign', 'resume_campaign'],
-          },
-          { status: 400 }
-        )
+    if (action !== 'pause_campaign' && action !== 'resume_campaign') {
+      return NextResponse.json(
+        { error: 'Unsupported action', supported: ['pause_campaign', 'resume_campaign'] },
+        { status: 400 }
+      )
     }
+
+    const targetStatus = action === 'pause_campaign' ? 'paused' : 'active'
+    if (action === 'pause_campaign' && campaign.status !== 'active') {
+      return NextResponse.json(
+        { error: `Campaign is ${campaign.status}, cannot pause` },
+        { status: 400 }
+      )
+    }
+    if (action === 'resume_campaign' && campaign.status !== 'paused') {
+      return NextResponse.json(
+        { error: `Campaign is ${campaign.status}, cannot resume` },
+        { status: 400 }
+      )
+    }
+
+    try {
+      await applyCampaignStatusChange({
+        orgId: org.id,
+        campaignId: campaign.id,
+        status: targetStatus,
+      })
+    } catch (err) {
+      const code = err instanceof PlatformError ? err.code : 'unknown'
+      const msg = err instanceof Error ? err.message : 'Apply failed'
+      return NextResponse.json({ error: msg, code }, { status: 502 })
+    }
+
+    await logAudit({
+      orgId: org.id,
+      userId: user.id,
+      action: 'advisor.apply',
+      targetType: 'campaign',
+      targetId: campaign.id,
+      metadata: { applied: action, name: campaign.name },
+      req,
+    })
+    return NextResponse.json({
+      ok: true,
+      message: action === 'pause_campaign' ? `Paused "${campaign.name}"` : `Resumed "${campaign.name}"`,
+      campaign: { id: campaign.id, status: targetStatus },
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Apply failed'
     return NextResponse.json({ error: message }, { status: 500 })

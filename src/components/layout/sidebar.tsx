@@ -9,14 +9,23 @@ import { useT } from '@/components/i18n-provider'
 import { LOCALES, LOCALE_LABELS, type Locale } from '@/lib/i18n'
 
 const navItems = [
-  { href: '/dashboard', key: 'nav.dashboard', icon: '📊' },
-  { href: '/campaigns', key: 'nav.campaigns',  icon: '🎯' },
-  { href: '/seedance2', key: 'nav.seedance2',  icon: '🎬' },
-  { href: '/assets',    key: 'nav.assets',     icon: '📂' },
-  { href: '/creatives', key: 'nav.creatives',  icon: '🎨' },
-  { href: '/budget',    key: 'nav.budget',     icon: '💰' },
-  { href: '/advisor',   key: 'nav.advisor',    icon: '🤖' },
-  { href: '/settings',  key: 'nav.settings',   icon: '⚙️' },
+  { href: '/dashboard',  key: 'nav.dashboard',  icon: '📊' },
+  { href: '/campaigns',  key: 'nav.campaigns',  icon: '🎯' },
+  { href: '/seedance2',  key: 'nav.seedance2',  icon: '🎬' },
+  { href: '/assets',     key: 'nav.assets',     icon: '📂' },
+  { href: '/creatives',  key: 'nav.creatives',  icon: '🎨' },
+  { href: '/budget',     key: 'nav.budget',     icon: '💰' },
+  { href: '/advisor',    key: 'nav.advisor',    icon: '🤖' },
+  { href: '/decisions',  key: 'nav.decisions',  icon: '🧠', fallback: 'Decisions' },
+  { href: '/approvals',  key: 'nav.approvals',  icon: '🛂', fallback: 'Approvals' },
+  { href: '/guardrails', key: 'nav.guardrails', icon: '🚧', fallback: 'Guardrails' },
+  { href: '/experiments', key: 'nav.experiments', icon: '🧪', fallback: 'Experiments' },
+  { href: '/prompts',    key: 'nav.prompts',    icon: '📝', fallback: 'Prompts' },
+  { href: '/agent-cost', key: 'nav.agent_cost', icon: '💵', fallback: 'LLM cost' },
+  { href: '/agent-onboarding', key: 'nav.agent_onboarding', icon: '🚀', fallback: 'Onboarding' },
+  { href: '/webhooks',   key: 'nav.webhooks',   icon: '📡', fallback: 'Webhooks' },
+  { href: '/creatives/review', key: 'nav.creative_review', icon: '🖼️', fallback: 'Creative review' },
+  { href: '/settings',   key: 'nav.settings',   icon: '⚙️' },
 ]
 
 type Org = { id: string; name: string; role: string; isActive: boolean }
@@ -150,21 +159,28 @@ export function Sidebar({
         </div>
       )}
       <nav className="flex-1 px-3 py-4 space-y-1">
-        {navItems.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn(
-              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-              pathname.startsWith(item.href)
-                ? 'bg-blue-600/20 text-blue-400'
-                : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-            )}
-          >
-            <span className="text-lg">{item.icon}</span>
-            {t(item.key)}
-          </Link>
-        ))}
+        {navItems.map((item) => {
+          const label = t(item.key)
+          // i18n keys not yet translated come back as the raw key — fall back
+          // to a hard-coded English label when present (sidebar nav additions
+          // shouldn't have to wait on localization to be usable).
+          const text = label === item.key && 'fallback' in item ? (item as { fallback?: string }).fallback || label : label
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                pathname.startsWith(item.href)
+                  ? 'bg-blue-600/20 text-blue-400'
+                  : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+              )}
+            >
+              <span className="text-lg">{item.icon}</span>
+              {text}
+            </Link>
+          )
+        })}
       </nav>
       <div className="px-4 py-4 border-t border-gray-800 space-y-2">
         {userName && (

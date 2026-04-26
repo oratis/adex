@@ -63,6 +63,15 @@ model Organization {
   assets        Asset[]
   auditEvents   AuditEvent[]
   webhooks      Webhook[]
+
+  // Agent system (P10–P17)
+  platformLinks     PlatformLink[]
+  campaignSnapshots CampaignSnapshot[]
+  decisions         Decision[]
+  guardrails        Guardrail[]
+  pendingApprovals  PendingApproval[]
+  experiments       Experiment[]
+  agentConfig       AgentConfig?
 }
 
 model Webhook {
@@ -80,9 +89,33 @@ model Webhook {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  org       Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
 
   @@index([orgId])
+}
+
+// Persistent retry queue for failed webhook deliveries.
+// Drained by /api/cron/webhook-retry with exponential backoff.
+model WebhookDelivery {
+  id              String   @id @default(cuid())
+  webhookId       String
+  event           String
+  payload         String   // full JSON body to re-POST
+  attempts        Int      @default(0)
+  maxAttempts     Int      @default(5)
+  nextAttemptAt   DateTime
+  lastStatusCode  Int?
+  lastError       String?
+  succeededAt     DateTime?
+  abandonedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([nextAttemptAt, succeededAt, abandonedAt])
+  @@index([webhookId])
 }
 
 model OrgMembership {
@@ -153,9 +186,15 @@ model Campaign {
   ageMin          Int?
   ageMax          Int?
   gender          String?  // all, male, female
-  platformCampaignId String? // ID from the ad platform
+  platformCampaignId String? // ID from the ad platform (legacy; new code reads PlatformLink)
   startDate       DateTime?
   endDate         DateTime?
+  // P10/P12 — desired vs synced state (agent / drift)
+  desiredStatus   String   @default("draft")
+  syncedStatus    String?
+  syncedAt        DateTime?
+  syncError       String?
+  managedByAgent  Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -167,6 +206,7 @@ model Campaign {
 
   @@index([orgId])
   @@index([userId])
+  @@index([orgId, managedByAgent])
 }
 
 model AdGroup {
@@ -193,6 +233,9 @@ model Ad {
   destinationUrl String?
   platformAdId  String?
   status        String   @default("draft")
+  // P15 — surface platform reject reasons
+  platformPolicyStatus String?  // approved, pending_review, rejected
+  platformPolicyNote   String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -206,7 +249,7 @@ model Creative {
   userId      String   // creator
   name        String
   type        String   // image, video
-  source      String   // upload, seedream, seedance
+  source      String   // upload, seedream, seedance, agent
   filePath    String?
   fileUrl     String?
   prompt      String?  // AI generation prompt
@@ -214,6 +257,13 @@ model Creative {
   width       Int?
   height      Int?
   duration    Int?     // for video, in seconds
+  // P15 — review + platform sync metadata
+  reviewStatus    String  @default("none")    // none | pending | approved | rejected
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  reviewNotes     String?
+  platformAssetId String?                     // returned by uploadCreativeAsset
+  platformPolicy  String?                     // policy_violation_reason from platform if any
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -223,6 +273,7 @@ model Creative {
 
   @@index([orgId])
   @@index([userId])
+  @@index([orgId, reviewStatus])
 }
 
 model Budget {
@@ -253,6 +304,11 @@ model Report {
   userId      String   // creator of the sync
   campaignId  String?
   platform    String   // google, meta, tiktok, appsflyer, adjust
+  // P11 — granularity dimensions
+  level          String  @default("account")    // account | campaign | adgroup | ad
+  campaignLinkId String?
+  adGroupLinkId  String?
+  adLinkId       String?
   date        DateTime
   impressions Int      @default(0)
   clicks      Int      @default(0)
@@ -270,9 +326,14 @@ model Report {
   org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   campaign Campaign?    @relation(fields: [campaignId], references: [id])
+  campaignLink PlatformLink? @relation("CampaignReport", fields: [campaignLinkId], references: [id], onDelete: SetNull)
+  adGroupLink  PlatformLink? @relation("AdGroupReport",  fields: [adGroupLinkId],  references: [id], onDelete: SetNull)
+  adLink       PlatformLink? @relation("AdReport",       fields: [adLinkId],       references: [id], onDelete: SetNull)
 
   @@index([orgId])
   @@index([userId])
+  @@index([orgId, level, date])
+  @@index([campaignLinkId, date])
 }
 
 model DailyDigest {
@@ -345,4 +406,259 @@ model Asset {
   children Asset[] @relation("AssetTree")
 
   @@index([orgId])
+}
+
+// =====================================================================
+// Agent system (Phases 10–17)
+// =====================================================================
+
+// P10 — single source of truth for "local entity ↔ platform entity" mapping
+model PlatformLink {
+  id               String   @id @default(cuid())
+  orgId            String
+  platform         String   // google, meta, tiktok, amazon, linkedin
+  accountId        String   // platform account id (Google customerId, Meta act_xxx, etc.)
+  entityType       String   // campaign, adgroup, ad, creative
+  localEntityId    String   // PK in our table (Campaign.id, AdGroup.id, ...)
+  platformEntityId String   // PK on the platform
+  status           String   @default("active") // active, deleted, orphan
+  lastSyncedAt     DateTime?
+  metadata         String?  // JSON
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  org       Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  snapshots CampaignSnapshot[]
+  reportsAsCampaign Report[]    @relation("CampaignReport")
+  reportsAsAdGroup  Report[]    @relation("AdGroupReport")
+  reportsAsAd       Report[]    @relation("AdReport")
+  decisionSteps     DecisionStep[]
+
+  @@unique([platform, accountId, platformEntityId, entityType])
+  @@index([orgId, entityType, localEntityId])
+  @@index([orgId, platform, status])
+}
+
+// P12 — periodic snapshot of platform-side state (for drift + rollback)
+model CampaignSnapshot {
+  id             String   @id @default(cuid())
+  orgId          String
+  platformLinkId String
+  capturedAt     DateTime @default(now())
+  status         String   // active, paused, removed, ...
+  dailyBudget    Float?
+  lifetimeBudget Float?
+  bidStrategy    String?
+  targeting      String?  // JSON
+  raw            String   // full JSON
+
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  platformLink PlatformLink @relation(fields: [platformLinkId], references: [id], onDelete: Cascade)
+
+  @@index([platformLinkId, capturedAt])
+  @@index([orgId, capturedAt])
+}
+
+// P13 — agent decision records (one per LLM plan() call)
+model Decision {
+  id              String   @id @default(cuid())
+  orgId           String
+  triggerType     String   // cron, manual, webhook
+  perceiveContext String   // JSON: summary fed to the LLM
+  promptVersion   String?  // PromptVersion.id (P17)
+  llmRequestId    String?
+  llmInputTokens  Int?
+  llmOutputTokens Int?
+  llmCostUsd      Float?
+  rationale       String   // LLM's free-form reason
+  severity        String   // info, opportunity, warning, alert
+  mode            String   @default("shadow") // shadow, approval_only, autonomous
+  status          String   @default("pending") // pending, approved, rejected, executing, executed, failed, rolled_back, skipped
+  requiresApproval Boolean @default(false)
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedReason  String?
+  createdAt       DateTime @default(now())
+  executedAt      DateTime?
+
+  org      Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  steps    DecisionStep[]
+  outcome  DecisionOutcome?
+  approval PendingApproval?
+
+  @@index([orgId, createdAt])
+  @@index([orgId, status])
+  @@index([status])
+}
+
+model DecisionStep {
+  id               String   @id @default(cuid())
+  decisionId       String
+  stepIndex        Int
+  toolName         String
+  toolInput        String   // JSON
+  toolOutput       String?  // JSON or error
+  status           String   // pending, executed, failed, skipped, rolled_back
+  guardrailReport  String?  // JSON of evaluator results
+  platformResponse String?  // raw platform response (sanitized)
+  platformLinkId   String?  // optional: which entity this step touched
+  reversible       Boolean  @default(false)
+  rollbackOf       String?  // DecisionStep.id this step rolls back, if any
+  executedAt       DateTime?
+  createdAt        DateTime @default(now())
+
+  decision     Decision      @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+  platformLink PlatformLink? @relation(fields: [platformLinkId], references: [id], onDelete: SetNull)
+
+  @@index([decisionId, stepIndex])
+  @@index([toolName, status])
+}
+
+model DecisionOutcome {
+  id             String   @id @default(cuid())
+  decisionId     String   @unique
+  measuredAt     DateTime
+  windowHours    Int      // 24 or 168
+  metricsBefore  String   // JSON baseline
+  metricsAfter   String   // JSON
+  delta          String   // JSON
+  classification String   // success, neutral, regression, false_positive
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  decision Decision @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+}
+
+// P14 — guardrail rules (per-org, scope-aware)
+model Guardrail {
+  id        String   @id @default(cuid())
+  orgId     String
+  scope     String   // global, platform, campaign
+  scopeId   String?  // platform name or campaign id; null when scope=global
+  rule      String   // budget_max_daily, budget_change_pct, status_change, ...
+  config    String   // JSON: { max: 500, currency: "USD" }, etc.
+  isActive  Boolean  @default(true)
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, scope, scopeId])
+  @@index([orgId, rule, isActive])
+}
+
+// P14 — pending human approvals
+model PendingApproval {
+  id          String   @id @default(cuid())
+  orgId       String
+  decisionId  String   @unique
+  notifiedAt  DateTime?
+  notifiedVia String?  // email, slack, webhook
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  decision Decision     @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, expiresAt])
+}
+
+// P14/P16 — agent kill switch + per-org runtime config + onboarding state
+model AgentConfig {
+  id              String   @id @default(cuid())
+  orgId           String   @unique
+  enabled         Boolean  @default(false)
+  mode            String   @default("shadow") // shadow, approval_only, autonomous
+  killSwitch      Boolean  @default(false)    // when true, all agent work skipped immediately
+  killSwitchReason String?
+  killSwitchAt    DateTime?
+  monthlyLlmBudgetUsd Float @default(50)
+  monthlyLlmSpentUsd  Float @default(0)
+  budgetResetAt   DateTime?
+  // P16 — autonomous allowlist (extra gate beyond mode=autonomous)
+  autonomousAllowed   Boolean   @default(false)
+  autonomousAllowedAt DateTime?
+  autonomousAllowedBy String?
+  // P16 — onboarding milestones (the runtime enforces minimum dwell time per stage)
+  shadowStartedAt        DateTime?
+  approvalOnlyStartedAt  DateTime?
+  autonomousStartedAt    DateTime?
+  updatedBy       String?
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+// P15 — A/B experiments
+model Experiment {
+  id              String   @id @default(cuid())
+  orgId           String
+  campaignLinkId  String   // platform campaign under test
+  hypothesis      String
+  status          String   @default("running") // running, completed, aborted
+  startedAt       DateTime
+  endsAt          DateTime
+  primaryMetric   String   // ctr, roas, cpa
+  minSampleSize   Int      @default(1000)
+  result          String?  // JSON: winner + significance
+  createdAt       DateTime @default(now())
+
+  org  Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  arms ExperimentArm[]
+
+  @@index([orgId, status])
+}
+
+model ExperimentArm {
+  id              String   @id @default(cuid())
+  experimentId    String
+  name            String   // control, variant_a, ...
+  adLinkId        String   // PlatformLink (entityType=ad)
+  trafficShare    Float    // 0–1
+  metricsSnapshot String?  // JSON
+
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId])
+}
+
+// P17 — prompt versioning + per-call accounting
+model PromptVersion {
+  id        String   @id @default(cuid())
+  name      String   // "agent.plan", "advisor.summary", ...
+  version   Int
+  template  String   // full prompt text
+  model     String   // claude-sonnet-4-5, etc.
+  isDefault Boolean  @default(false)
+  // P17 — A/B traffic split (orgId hash → default vs experimental)
+  isExperimental Boolean @default(false)
+  experimentalSharePct Int @default(0)  // 0..100; how many orgs get this version
+  createdAt DateTime @default(now())
+
+  runs PromptRun[]
+
+  @@unique([name, version])
+  @@index([name, isDefault])
+  @@index([name, isExperimental])
+}
+
+model PromptRun {
+  id              String   @id @default(cuid())
+  promptVersionId String
+  decisionId      String?
+  inputHash       String   // SHA-256 for cache analytics
+  inputTokens     Int
+  outputTokens    Int
+  latencyMs       Int
+  costUsd         Float?
+  rawOutput       String
+  parsed          Boolean
+  createdAt       DateTime @default(now())
+
+  promptVersion PromptVersion @relation(fields: [promptVersionId], references: [id], onDelete: Cascade)
+
+  @@index([promptVersionId, createdAt])
+  @@index([decisionId])
 }

@@ -13,6 +13,11 @@ interface CampaignDetail {
   name: string
   platform: string
   status: string
+  desiredStatus?: string
+  syncedStatus?: string | null
+  syncedAt?: string | null
+  syncError?: string | null
+  managedByAgent?: boolean
   objective: string | null
   targetCountries: string | null
   ageMin: number | null
@@ -150,9 +155,23 @@ export default function CampaignDetailPage({
 
       <div className="flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl font-bold">{campaign.name}</h1>
-            <Badge variant={statusVariant(campaign.status)}>{campaign.status}</Badge>
+            <Badge variant={statusVariant(campaign.status)}>desired: {campaign.desiredStatus || campaign.status}</Badge>
+            {campaign.syncedStatus && (
+              <Badge
+                className={
+                  campaign.syncedStatus === (campaign.desiredStatus || campaign.status)
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-amber-100 text-amber-700'
+                }
+              >
+                platform: {campaign.syncedStatus}
+              </Badge>
+            )}
+            {campaign.managedByAgent && (
+              <Badge className="bg-purple-100 text-purple-700">managed by agent</Badge>
+            )}
           </div>
           <p className="text-gray-500 text-sm mt-1 capitalize">
             {campaign.platform} · {campaign.objective || 'no objective'}
@@ -168,6 +187,21 @@ export default function CampaignDetailPage({
           )}
         </div>
       </div>
+
+      {campaign.syncError && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 flex items-start gap-2">
+          <span className="text-lg leading-none">⚠️</span>
+          <div className="flex-1">
+            <p className="font-medium">Drift detected</p>
+            <p className="text-xs mt-1">{campaign.syncError}</p>
+            {campaign.syncedAt && (
+              <p className="text-xs text-amber-700 mt-1">
+                Last synced: {new Date(campaign.syncedAt).toLocaleString()}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

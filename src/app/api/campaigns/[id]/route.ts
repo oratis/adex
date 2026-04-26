@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { logAudit } from '@/lib/audit'
 import { fireWebhook } from '@/lib/webhooks'
+import { applyCampaignStatusChange } from '@/lib/platforms/apply-status'
+import { PlatformError, type DesiredStatus } from '@/lib/platforms/adapter'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -25,26 +27,46 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const { id } = await params
     const data = await req.json()
 
-    const campaign = await prisma.campaign.updateMany({
-      where: { id, orgId: org.id },
-      data: {
-        name: data.name,
-        platform: data.platform,
-        status: data.status,
-        objective: data.objective,
-        targetCountries: data.targetCountries ? JSON.stringify(data.targetCountries) : undefined,
-        targetAudience: data.targetAudience ? JSON.stringify(data.targetAudience) : undefined,
-        targetInterests: data.targetInterests ? JSON.stringify(data.targetInterests) : undefined,
-        ageMin: data.ageMin,
-        ageMax: data.ageMax,
-        gender: data.gender,
-        startDate: data.startDate ? new Date(data.startDate) : undefined,
-        endDate: data.endDate ? new Date(data.endDate) : undefined,
-      },
-    })
+    // 1. Status changes (active/paused/archived) MUST go through the adapter
+    //    so the platform side actually flips. Pull it out of the bulk update.
+    const wantsStatusChange =
+      typeof data.status === 'string' && ['active', 'paused', 'archived'].includes(data.status)
+    if (wantsStatusChange) {
+      try {
+        await applyCampaignStatusChange({
+          orgId: org.id,
+          campaignId: id,
+          status: data.status as DesiredStatus,
+        })
+      } catch (err) {
+        const code = err instanceof PlatformError ? err.code : 'unknown'
+        const msg = err instanceof Error ? err.message : 'Status change failed'
+        return NextResponse.json({ error: msg, code }, { status: 502 })
+      }
+    }
 
-    // Pause/resume/update — record distinct actions so the audit trail is
-    // useful. Status transitions are the most audit-interesting.
+    // 2. Apply non-status field changes
+    const fieldUpdate: Record<string, unknown> = {}
+    if (data.name !== undefined) fieldUpdate.name = data.name
+    if (data.platform !== undefined) fieldUpdate.platform = data.platform
+    if (data.objective !== undefined) fieldUpdate.objective = data.objective
+    if (data.targetCountries !== undefined)
+      fieldUpdate.targetCountries = JSON.stringify(data.targetCountries)
+    if (data.targetAudience !== undefined)
+      fieldUpdate.targetAudience = JSON.stringify(data.targetAudience)
+    if (data.targetInterests !== undefined)
+      fieldUpdate.targetInterests = JSON.stringify(data.targetInterests)
+    if (data.ageMin !== undefined) fieldUpdate.ageMin = data.ageMin
+    if (data.ageMax !== undefined) fieldUpdate.ageMax = data.ageMax
+    if (data.gender !== undefined) fieldUpdate.gender = data.gender
+    if (data.startDate !== undefined)
+      fieldUpdate.startDate = data.startDate ? new Date(data.startDate) : null
+    if (data.endDate !== undefined)
+      fieldUpdate.endDate = data.endDate ? new Date(data.endDate) : null
+    if (Object.keys(fieldUpdate).length > 0) {
+      await prisma.campaign.updateMany({ where: { id, orgId: org.id }, data: fieldUpdate })
+    }
+
     const action =
       data.status === 'paused' ? 'campaign.pause'
       : data.status === 'active' ? 'campaign.resume'
@@ -66,7 +88,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       }).catch(() => {})
     }
 
-    return NextResponse.json(campaign)
+    const updated = await prisma.campaign.findFirst({ where: { id, orgId: org.id } })
+    return NextResponse.json(updated)
   } catch {
     return NextResponse.json({ error: 'Failed to update' }, { status: 500 })
   }

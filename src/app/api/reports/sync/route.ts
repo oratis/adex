@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
-import { GoogleAdsClient } from '@/lib/platforms/google'
-import { MetaAdsClient } from '@/lib/platforms/meta'
-import { TikTokAdsClient } from '@/lib/platforms/tiktok'
 import { AppsFlyerClient } from '@/lib/platforms/appsflyer'
 import { AdjustClient } from '@/lib/platforms/adjust'
 import { AmazonAdsClient } from '@/lib/platforms/amazon'
 import { LinkedInAdsClient } from '@/lib/platforms/linkedin'
 import type { PlatformAuth } from '@/generated/prisma/client'
+import { getAdapter, isAdaptablePlatform } from '@/lib/platforms/registry'
+import { runAdapterSync } from '@/lib/sync/report-writer'
 
 type SyncMetrics = {
   impressions: number
@@ -85,7 +84,12 @@ async function upsertReport(
 
 // ---------------- Per-platform handlers ----------------
 
-async function syncGoogle(
+/**
+ * For adaptable platforms (google/meta/tiktok) we delegate to the adapter
+ * registry which writes BOTH account-level (legacy) and campaign-level (P11)
+ * Report rows in one pass.
+ */
+async function syncViaAdapter(
   auth: PlatformAuth,
   orgId: string,
   userId: string,
@@ -93,165 +97,9 @@ async function syncGoogle(
   endDate: string,
   today: Date
 ) {
-  if (!auth.refreshToken || !auth.apiKey) {
-    return { error: 'Missing refresh token or developer token' }
-  }
-
-  const client = new GoogleAdsClient({
-    accessToken: auth.accessToken || '',
-    refreshToken: auth.refreshToken,
-    customerId: auth.accountId || '',
-    developerToken: auth.apiKey,
-  })
-
-  const newToken = await client.refreshAccessToken()
-  await prisma.platformAuth.update({
-    where: { id: auth.id },
-    data: { accessToken: newToken },
-  })
-
-  const customerIds = await client.listAccessibleCustomers()
-  const nonManagerIds: string[] = []
-
-  for (const cid of customerIds) {
-    try {
-      const data = await client.search(
-        cid,
-        'SELECT customer.id, customer.manager FROM customer LIMIT 1'
-      )
-      const customer = (data.results?.[0] as Record<string, Record<string, unknown>>)?.customer
-      if (!customer?.manager) {
-        nonManagerIds.push(cid)
-      }
-    } catch {
-      // Skip inaccessible
-    }
-  }
-
-  const metrics = emptyMetrics()
-  for (const cid of nonManagerIds) {
-    try {
-      const report = await client.getAggregatedReport(cid, startDate, endDate)
-      metrics.impressions += report.impressions
-      metrics.clicks += report.clicks
-      metrics.conversions += report.conversions
-      metrics.spend += report.spend
-      metrics.revenue += report.revenue
-    } catch (err) {
-      console.error(`Google Ads report failed for ${cid}:`, err)
-    }
-  }
-
-  await upsertReport(orgId, userId, 'google', today, metrics, {
-    customerIds: nonManagerIds,
-    startDate,
-    endDate,
-  })
-
-  return { success: true, accounts: nonManagerIds.length, ...metrics }
-}
-
-async function syncMeta(
-  auth: PlatformAuth,
-  orgId: string,
-  userId: string,
-  startDate: string,
-  endDate: string,
-  today: Date
-) {
-  if (!auth.accessToken || !auth.accountId) {
-    return { error: 'Missing access token or ad account ID' }
-  }
-
-  // Strip optional "act_" prefix; client re-adds it
-  const accountId = auth.accountId.replace(/^act_/, '')
-  const client = new MetaAdsClient({
-    accessToken: auth.accessToken,
-    adAccountId: accountId,
-    appId: auth.appId || undefined,
-    appSecret: auth.appSecret || undefined,
-  })
-
-  const data = await client.getReport(startDate, endDate)
-  if (data.error) {
-    return { error: data.error.message || 'Meta API error' }
-  }
-
-  const rows: Array<Record<string, unknown>> = Array.isArray(data.data) ? data.data : []
-  const metrics = emptyMetrics()
-
-  for (const row of rows) {
-    metrics.impressions += num(row.impressions)
-    metrics.clicks += num(row.clicks)
-    metrics.spend += num(row.spend)
-
-    // Actions: try to find purchase / conversions; revenue via action_values
-    const actions = Array.isArray(row.actions) ? (row.actions as Array<Record<string, unknown>>) : []
-    for (const a of actions) {
-      const t = String(a.action_type || '')
-      if (t === 'purchase' || t === 'offsite_conversion.fb_pixel_purchase' || t.includes('conversion')) {
-        metrics.conversions += num(a.value)
-      }
-      if (t === 'mobile_app_install' || t === 'app_install') {
-        metrics.installs += num(a.value)
-      }
-    }
-    const actionValues = Array.isArray(row.action_values)
-      ? (row.action_values as Array<Record<string, unknown>>)
-      : []
-    for (const a of actionValues) {
-      const t = String(a.action_type || '')
-      if (t === 'purchase' || t.includes('conversion')) {
-        metrics.revenue += num(a.value)
-      }
-    }
-  }
-
-  await upsertReport(orgId, userId, 'meta', today, metrics, { rows: rows.length, startDate, endDate })
-  return { success: true, rows: rows.length, ...metrics }
-}
-
-async function syncTikTok(
-  auth: PlatformAuth,
-  orgId: string,
-  userId: string,
-  startDate: string,
-  endDate: string,
-  today: Date
-) {
-  if (!auth.accessToken || !auth.accountId) {
-    return { error: 'Missing access token or advertiser ID' }
-  }
-
-  const client = new TikTokAdsClient({
-    accessToken: auth.accessToken,
-    advertiserId: auth.accountId,
-    appId: auth.appId || undefined,
-    secret: auth.appSecret || undefined,
-  })
-
-  const data = await client.getReport(startDate, endDate)
-  if (data.code && data.code !== 0) {
-    return { error: data.message || 'TikTok API error' }
-  }
-
-  const list: Array<Record<string, unknown>> = Array.isArray(data.data?.list) ? data.data.list : []
-  const metrics = emptyMetrics()
-
-  for (const row of list) {
-    const m = (row.metrics as Record<string, unknown>) || row
-    metrics.impressions += num(m.impressions)
-    metrics.clicks += num(m.clicks)
-    metrics.spend += num(m.spend)
-    metrics.conversions += num(m.conversion)
-  }
-
-  await upsertReport(orgId, userId, 'tiktok', today, metrics, {
-    rows: list.length,
-    startDate,
-    endDate,
-  })
-  return { success: true, rows: list.length, ...metrics }
+  const adapter = getAdapter(auth.platform, auth)
+  const out = await runAdapterSync(adapter, { orgId, userId, startDate, endDate, today })
+  return { success: true, ...out.account, campaignsWritten: out.campaignsWritten }
 }
 
 async function syncAppsFlyer(
@@ -437,16 +285,18 @@ export async function POST() {
 
     for (const auth of auths) {
       try {
+        if (isAdaptablePlatform(auth.platform)) {
+          results[auth.platform] = await syncViaAdapter(
+            auth,
+            org.id,
+            user.id,
+            startDate,
+            endDate,
+            today
+          )
+          continue
+        }
         switch (auth.platform) {
-          case 'google':
-            results.google = await syncGoogle(auth, org.id, user.id, startDate, endDate, today)
-            break
-          case 'meta':
-            results.meta = await syncMeta(auth, org.id, user.id, startDate, endDate, today)
-            break
-          case 'tiktok':
-            results.tiktok = await syncTikTok(auth, org.id, user.id, startDate, endDate, today)
-            break
           case 'appsflyer':
             results.appsflyer = await syncAppsFlyer(auth, org.id, user.id, startDate, endDate, today)
             break

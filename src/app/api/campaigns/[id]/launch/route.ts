@@ -3,9 +3,9 @@ import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { logAudit } from '@/lib/audit'
 import { fireWebhook } from '@/lib/webhooks'
-import { GoogleAdsClient } from '@/lib/platforms/google'
-import { MetaAdsClient } from '@/lib/platforms/meta'
-import { TikTokAdsClient } from '@/lib/platforms/tiktok'
+import { getAdapter, isAdaptablePlatform } from '@/lib/platforms/registry'
+import { upsertPlatformLink } from '@/lib/platforms/links'
+import { PlatformError, type LaunchCampaignInput } from '@/lib/platforms/adapter'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -18,62 +18,79 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     })
     if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
+    if (!isAdaptablePlatform(campaign.platform)) {
+      return NextResponse.json(
+        { error: `Launch via adapter not yet supported for ${campaign.platform}` },
+        { status: 400 }
+      )
+    }
+
     const auth = await prisma.platformAuth.findFirst({
       where: { orgId: org.id, platform: campaign.platform, isActive: true },
     })
-    if (!auth) return NextResponse.json({ error: `No ${campaign.platform} authorization found` }, { status: 400 })
+    if (!auth)
+      return NextResponse.json(
+        { error: `No ${campaign.platform} authorization found` },
+        { status: 400 }
+      )
 
-    let result: unknown
+    const adapter = getAdapter(campaign.platform, auth)
     const budget = campaign.budgets[0]
-
-    switch (campaign.platform) {
-      case 'google': {
-        const client = new GoogleAdsClient({
-          accessToken: auth.accessToken!,
-          refreshToken: auth.refreshToken!,
-          customerId: auth.accountId!,
-          developerToken: auth.apiKey || undefined,
-        })
-        result = await client.createCampaign(auth.accountId!, {
-          name: campaign.name,
-          budget: budget?.amount || 50,
-          objective: campaign.objective || 'DISPLAY',
-          startDate: campaign.startDate?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0],
-          endDate: campaign.endDate?.toISOString().split('T')[0],
-        })
-        break
-      }
-      case 'meta': {
-        const client = new MetaAdsClient({
-          accessToken: auth.accessToken!,
-          adAccountId: auth.accountId!,
-        })
-        result = await client.createCampaign({
-          name: campaign.name,
-          objective: campaign.objective || 'OUTCOME_AWARENESS',
-          dailyBudget: budget?.type === 'daily' ? budget.amount : undefined,
-          lifetimeBudget: budget?.type === 'lifetime' ? budget.amount : undefined,
-        })
-        break
-      }
-      case 'tiktok': {
-        const client = new TikTokAdsClient({
-          accessToken: auth.accessToken!,
-          advertiserId: auth.accountId!,
-        })
-        result = await client.createCampaign({
-          name: campaign.name,
-          objective: campaign.objective || 'REACH',
-          budget: budget?.amount || 50,
-          budgetMode: budget?.type === 'daily' ? 'BUDGET_MODE_DAY' : 'BUDGET_MODE_TOTAL',
-        })
-        break
-      }
+    const launchInput: LaunchCampaignInput = {
+      name: campaign.name,
+      objective: campaign.objective || undefined,
+      dailyBudget: budget?.type === 'daily' ? budget.amount : undefined,
+      lifetimeBudget: budget?.type === 'lifetime' ? budget.amount : undefined,
+      startDate: campaign.startDate?.toISOString().split('T')[0],
+      endDate: campaign.endDate?.toISOString().split('T')[0],
+      targetCountries: campaign.targetCountries
+        ? (JSON.parse(campaign.targetCountries) as string[])
+        : undefined,
+      ageMin: campaign.ageMin ?? undefined,
+      ageMax: campaign.ageMax ?? undefined,
+      gender: (campaign.gender as 'all' | 'male' | 'female' | undefined) || undefined,
+      interests: campaign.targetInterests
+        ? (JSON.parse(campaign.targetInterests) as string[])
+        : undefined,
     }
+
+    let result
+    try {
+      result = await adapter.launchCampaign(launchInput)
+    } catch (err) {
+      if (err instanceof PlatformError) {
+        await prisma.campaign.update({
+          where: { id },
+          data: { syncError: `[${err.code}] ${err.message}`.slice(0, 500), syncedAt: new Date() },
+        })
+        return NextResponse.json(
+          { error: `${campaign.platform}: ${err.message}`, code: err.code },
+          { status: 502 }
+        )
+      }
+      throw err
+    }
+
+    await upsertPlatformLink({
+      orgId: org.id,
+      platform: campaign.platform,
+      accountId: adapter.accountId,
+      entityType: 'campaign',
+      localEntityId: campaign.id,
+      platformEntityId: result.platformCampaignId,
+      metadata: { launchedAt: new Date().toISOString() },
+    })
 
     await prisma.campaign.update({
       where: { id },
-      data: { status: 'active' },
+      data: {
+        status: 'active',
+        desiredStatus: 'active',
+        platformCampaignId: result.platformCampaignId,
+        syncError: null,
+        syncedAt: new Date(),
+        syncedStatus: 'paused', // adapters launch in PAUSED; sync worker will refresh once user activates
+      },
     })
 
     await logAudit({
@@ -82,16 +99,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       action: 'campaign.launch',
       targetType: 'campaign',
       targetId: id,
-      metadata: { platform: campaign.platform, name: campaign.name },
+      metadata: {
+        platform: campaign.platform,
+        name: campaign.name,
+        platformCampaignId: result.platformCampaignId,
+      },
       req,
     })
     fireWebhook({
       orgId: org.id,
       event: 'campaign.launched',
-      data: { campaignId: id, name: campaign.name, platform: campaign.platform, launchedBy: user.id },
+      data: {
+        campaignId: id,
+        name: campaign.name,
+        platform: campaign.platform,
+        platformCampaignId: result.platformCampaignId,
+        launchedBy: user.id,
+      },
     }).catch(() => {})
 
-    return NextResponse.json({ success: true, platformResponse: result })
+    return NextResponse.json({
+      success: true,
+      platformCampaignId: result.platformCampaignId,
+      platformResponse: result.raw,
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Launch failed'
     return NextResponse.json({ error: message }, { status: 500 })

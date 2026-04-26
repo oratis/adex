@@ -2,11 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mailer'
 import { completeText, isLLMConfigured } from '@/lib/llm'
-import { GoogleAdsClient } from '@/lib/platforms/google'
-import { MetaAdsClient } from '@/lib/platforms/meta'
-import { TikTokAdsClient } from '@/lib/platforms/tiktok'
 import { AppsFlyerClient } from '@/lib/platforms/appsflyer'
 import { AdjustClient } from '@/lib/platforms/adjust'
+import { getAdapter, isAdaptablePlatform } from '@/lib/platforms/registry'
+import { runAdapterSync } from '@/lib/sync/report-writer'
 
 /**
  * POST /api/cron/daily
@@ -53,72 +52,29 @@ const num = (x: unknown): number => {
 
 async function syncOne(
   platform: string,
-  auth: { id: string; accessToken: string | null; refreshToken: string | null; accountId: string | null; appId: string | null; appSecret: string | null; apiKey: string | null },
+  auth: { id: string; platform: string; orgId: string; userId: string; accessToken: string | null; refreshToken: string | null; accountId: string | null; appId: string | null; appSecret: string | null; apiKey: string | null; isActive: boolean; createdAt: Date; updatedAt: Date; extra: string | null },
   startDate: string,
-  endDate: string
+  endDate: string,
+  today: Date
 ): Promise<SyncMetrics | { error: string }> {
   try {
-    if (platform === 'google') {
-      if (!auth.refreshToken || !auth.apiKey) return { error: 'missing credentials' }
-      const client = new GoogleAdsClient({
-        accessToken: auth.accessToken || '',
-        refreshToken: auth.refreshToken,
-        customerId: auth.accountId || '',
-        developerToken: auth.apiKey,
+    if (isAdaptablePlatform(platform)) {
+      const adapter = getAdapter(platform, auth)
+      const out = await runAdapterSync(adapter, {
+        orgId: auth.orgId,
+        userId: auth.userId,
+        startDate,
+        endDate,
+        today,
       })
-      const newToken = await client.refreshAccessToken()
-      await prisma.platformAuth.update({ where: { id: auth.id }, data: { accessToken: newToken } })
-      const customerIds = await client.listAccessibleCustomers()
-      const metrics = empty()
-      for (const cid of customerIds) {
-        try {
-          const data = await client.search(cid, 'SELECT customer.id, customer.manager FROM customer LIMIT 1')
-          const customer = (data.results?.[0] as Record<string, Record<string, unknown>>)?.customer
-          if (customer?.manager) continue
-          const r = await client.getAggregatedReport(cid, startDate, endDate)
-          metrics.impressions += r.impressions
-          metrics.clicks += r.clicks
-          metrics.conversions += r.conversions
-          metrics.spend += r.spend
-          metrics.revenue += r.revenue
-        } catch { /* skip */ }
+      return {
+        impressions: out.account.impressions,
+        clicks: out.account.clicks,
+        conversions: out.account.conversions,
+        spend: out.account.spend,
+        revenue: out.account.revenue,
+        installs: out.account.installs,
       }
-      return metrics
-    }
-    if (platform === 'meta' && auth.accessToken && auth.accountId) {
-      const accountId = auth.accountId.replace(/^act_/, '')
-      const client = new MetaAdsClient({
-        accessToken: auth.accessToken, adAccountId: accountId,
-        appId: auth.appId || undefined, appSecret: auth.appSecret || undefined,
-      })
-      const data = await client.getReport(startDate, endDate)
-      if (data.error) return { error: data.error.message }
-      const metrics = empty()
-      const rows: Array<Record<string, unknown>> = Array.isArray(data.data) ? data.data : []
-      for (const row of rows) {
-        metrics.impressions += num(row.impressions)
-        metrics.clicks += num(row.clicks)
-        metrics.spend += num(row.spend)
-      }
-      return metrics
-    }
-    if (platform === 'tiktok' && auth.accessToken && auth.accountId) {
-      const client = new TikTokAdsClient({
-        accessToken: auth.accessToken, advertiserId: auth.accountId,
-        appId: auth.appId || undefined, secret: auth.appSecret || undefined,
-      })
-      const data = await client.getReport(startDate, endDate)
-      if (data.code && data.code !== 0) return { error: data.message || 'tiktok error' }
-      const metrics = empty()
-      const list: Array<Record<string, unknown>> = Array.isArray(data.data?.list) ? data.data.list : []
-      for (const row of list) {
-        const m = (row.metrics as Record<string, unknown>) || row
-        metrics.impressions += num(m.impressions)
-        metrics.clicks += num(m.clicks)
-        metrics.spend += num(m.spend)
-        metrics.conversions += num(m.conversion)
-      }
-      return metrics
     }
     if (platform === 'appsflyer' && auth.apiKey && auth.appId) {
       const client = new AppsFlyerClient({ apiToken: auth.apiKey, appId: auth.appId })
@@ -192,28 +148,36 @@ export async function POST(req: NextRequest) {
   for (const org of orgs) {
     const syncResults: Record<string, unknown> = {}
 
-    // 1. Sync every active platform and write a daily Report
+    // 1. Sync every active platform and write a daily Report. Adaptable
+    //    platforms write account+campaign rows themselves (via runAdapterSync);
+    //    legacy MMP platforms still use the inline upsert below.
     for (const auth of org.platformAuths) {
-      const metrics = await syncOne(auth.platform, auth, startDate, endDate)
+      const metrics = await syncOne(auth.platform, auth, startDate, endDate, today)
       if ('error' in metrics) {
         syncResults[auth.platform] = { error: metrics.error }
         continue
       }
-      const reportId = `${auth.platform}-${org.id}-${endDate}`
-      await prisma.report.upsert({
-        where: { id: reportId },
-        update: { ...metrics, ...derived(metrics), rawData: JSON.stringify({ cron: true, startDate, endDate }) },
-        create: {
-          id: reportId,
-          orgId: org.id,
-          userId: org.createdBy,
-          platform: auth.platform,
-          date: today,
-          ...metrics,
-          ...derived(metrics),
-          rawData: JSON.stringify({ cron: true, startDate, endDate }),
-        },
-      })
+      if (!isAdaptablePlatform(auth.platform)) {
+        const reportId = `${auth.platform}-${org.id}-${endDate}`
+        await prisma.report.upsert({
+          where: { id: reportId },
+          update: {
+            ...metrics,
+            ...derived(metrics),
+            rawData: JSON.stringify({ cron: true, startDate, endDate }),
+          },
+          create: {
+            id: reportId,
+            orgId: org.id,
+            userId: org.createdBy,
+            platform: auth.platform,
+            date: today,
+            ...metrics,
+            ...derived(metrics),
+            rawData: JSON.stringify({ cron: true, startDate, endDate }),
+          },
+        })
+      }
       syncResults[auth.platform] = { ok: true, ...metrics }
     }
 

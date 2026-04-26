@@ -1,0 +1,49 @@
+name: Prompt eval
+
+# Triggers when any prompt template, eval fixture, or planner code changes.
+# Uses ANTHROPIC_API_KEY from repo secrets — required.
+# Pass-rate floor: 90% (see docs/agent/09-roadmap.md §Phase 13 退出标准).
+on:
+  pull_request:
+    paths:
+      - 'src/lib/agent/prompts/**'
+      - 'src/lib/agent/eval/**'
+      - 'src/lib/agent/plan.ts'
+      - 'src/lib/agent/tools/**'
+
+env:
+  PASS_RATE_FLOOR: 0.9
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://stub/stub
+      - name: Run eval harness
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-sonnet-4-5
+        run: |
+          npx tsx scripts/run-prompt-eval.ts > eval-output.json
+          cat eval-output.json
+      - name: Enforce pass-rate floor
+        run: |
+          PASS=$(jq -r '.passRate' eval-output.json)
+          echo "pass rate = $PASS (floor $PASS_RATE_FLOOR)"
+          awk -v pass="$PASS" -v floor="$PASS_RATE_FLOOR" \
+            'BEGIN { if (pass+0 < floor+0) { exit 1 } }'
+      - name: Upload eval result
+        uses: actions/upload-artifact@v4
+        with:
+          name: prompt-eval
+          path: eval-output.json
