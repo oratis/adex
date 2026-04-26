@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import crypto from 'node:crypto'
 import { PrismaClient } from '../src/generated/prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 import pg from 'pg'
@@ -40,12 +41,21 @@ async function main() {
 
   try {
     const email = process.env.SEED_EMAIL || 'demo@adexads.com'
-    const password = process.env.SEED_PASSWORD || 'demo2024demo'
     const displayName = process.env.SEED_NAME || 'Demo User'
 
-    // 1. Demo user + personal org
+    // 1. Demo user + personal org.
+    //    Password handling:
+    //      - SEED_PASSWORD set  → use it (operator's choice)
+    //      - SEED_PASSWORD unset → generate a cryptographically random
+    //        16-char password and print it ONCE so the operator can save it.
+    //    There is intentionally no hardcoded default — a public default
+    //    password in an OSS repo is a foot-gun for fresh deployments.
+    let createdPassword: string | null = null
     let user = await prisma.user.findUnique({ where: { email } })
     if (!user) {
+      const envPassword = process.env.SEED_PASSWORD
+      const password = envPassword || crypto.randomBytes(12).toString('base64url')
+      createdPassword = password
       user = await prisma.user.create({
         data: {
           email,
@@ -53,7 +63,10 @@ async function main() {
           name: displayName,
         },
       })
-      console.log(`✅ Created demo user: ${email} / ${password}`)
+      console.log(`✅ Created demo user: ${email}`)
+      if (!envPassword) {
+        console.log(`   ⚠ SEED_PASSWORD not set — generated a random one (printed in the summary below).`)
+      }
     } else {
       console.log(`ℹ User exists: ${email}`)
     }
@@ -158,7 +171,11 @@ async function main() {
 
     console.log(`\n✅ Seed complete.`)
     console.log(`   Login:     ${email}`)
-    console.log(`   Password:  ${password}`)
+    if (createdPassword) {
+      console.log(`   Password:  ${createdPassword}    ← save this; not shown again`)
+    } else {
+      console.log(`   Password:  (unchanged; user already existed)`)
+    }
     console.log(`   Workspace: ${org.name}`)
   } finally {
     await prisma.$disconnect()
