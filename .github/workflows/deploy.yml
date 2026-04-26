@@ -44,16 +44,19 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Submit build + deploy via cloudbuild.yaml
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_SERVICE: ${{ secrets.GCP_SERVICE }}
+          GCP_REGION: ${{ secrets.GCP_REGION }}
+          GCP_SQL_INSTANCE: ${{ secrets.GCP_SQL_INSTANCE }}
+          GCP_RUNTIME_SECRETS: ${{ secrets.GCP_RUNTIME_SECRETS }}
+          GCP_RUNTIME_SA: ${{ secrets.GCP_RUNTIME_SA }}
         run: |
+          SUBS="_SERVICE=${GCP_SERVICE},_REGION=${GCP_REGION},_SQL_INSTANCE=${GCP_SQL_INSTANCE},_SECRETS=${GCP_RUNTIME_SECRETS},_SERVICE_ACCOUNT=${GCP_RUNTIME_SA}"
           gcloud builds submit \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --project "$GCP_PROJECT_ID" \
             --config cloudbuild.yaml \
-            --substitutions \
-              _SERVICE=${{ secrets.GCP_SERVICE }},\
-_REGION=${{ secrets.GCP_REGION }},\
-_SQL_INSTANCE=${{ secrets.GCP_SQL_INSTANCE }},\
-_SECRETS=${{ secrets.GCP_RUNTIME_SECRETS }},\
-_SERVICE_ACCOUNT=${{ secrets.GCP_RUNTIME_SA }}
+            --substitutions "$SUBS"
 
       - name: Smoke check post-deploy
         run: |
