@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { recordAdPolicyStatus } from '@/lib/platforms/policy-violations'
 
@@ -5,21 +6,54 @@ import { recordAdPolicyStatus } from '@/lib/platforms/policy-violations'
  * POST /api/platforms/policy-events
  *
  * Inbound webhook from a platform reporting an Ad's policy status change.
- * Authenticated via X-Cron-Secret (the same shared secret used for cron) so
- * that platform-side bridges can post structured events without standing up
- * separate auth.
  *
- *   { orgId, platform, platformAdId, status: 'approved'|'pending_review'|'rejected', reason? }
+ * Auth (in priority order):
+ *   1. `X-Adex-Inbound-Signature: sha256=<hex>` HMAC over the raw body using
+ *      `INBOUND_WEBHOOK_SECRET` env var. This is the production path — every
+ *      bridge that posts here proves it knows the secret without sending it
+ *      in plaintext, and the signature also tamper-evidences the body.
+ *   2. Fallback: `X-Cron-Secret` shared secret (same value as cron). Kept
+ *      for local-dev convenience.
+ *
+ * Body: { orgId, platformAdId, status: 'approved'|'pending_review'|'rejected', reason? }
  */
-export async function POST(req: NextRequest) {
+function verifySignature(req: NextRequest, body: string): boolean {
+  const provided = req.headers.get('x-adex-inbound-signature')
+  const secret = process.env.INBOUND_WEBHOOK_SECRET
+  if (!provided || !secret) return false
+  const expected = `sha256=${crypto.createHmac('sha256', secret).update(body).digest('hex')}`
+  // Constant-time compare to avoid timing leaks
+  if (provided.length !== expected.length) return false
+  return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
+}
+
+function verifyCronFallback(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
-  if (!secret) return NextResponse.json({ error: 'CRON_SECRET not set' }, { status: 500 })
+  if (!secret) return false
   const provided =
     req.headers.get('x-cron-secret') ||
     req.headers.get('authorization')?.replace(/^Bearer /i, '')
-  if (provided !== secret) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  return provided === secret
+}
 
-  const body = await req.json().catch(() => ({}))
+export async function POST(req: NextRequest) {
+  const raw = await req.text()
+  if (!verifySignature(req, raw) && !verifyCronFallback(req)) {
+    return NextResponse.json(
+      {
+        error:
+          'Unauthorized — provide X-Adex-Inbound-Signature (HMAC over raw body using INBOUND_WEBHOOK_SECRET) or X-Cron-Secret',
+      },
+      { status: 401 }
+    )
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = JSON.parse(raw)
+  } catch {
+    return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 })
+  }
   const orgId = String(body.orgId || '')
   const platformAdId = String(body.platformAdId || '')
   const status = body.status

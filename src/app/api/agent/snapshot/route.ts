@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { getAdapter, isAdaptablePlatform } from '@/lib/platforms/registry'
 import { captureCampaignSnapshots, detectDrift } from '@/lib/sync/snapshot'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 /**
  * POST /api/agent/snapshot
@@ -14,7 +15,7 @@ import { captureCampaignSnapshots, detectDrift } from '@/lib/sync/snapshot'
 const lastRunByOrg = new Map<string, number>()
 const DEDUPE_MS = 60_000
 
-export async function POST(_req: NextRequest) {
+export async function POST(req: NextRequest) {
   let user, org, role
   try {
     const ctx = await requireAuthWithOrg()
@@ -28,6 +29,17 @@ export async function POST(_req: NextRequest) {
     return NextResponse.json({ error: 'Owner/admin only' }, { status: 403 })
   }
   void user
+  // Distributed rate limit (will share across instances when rate-limit.ts
+  // moves to Redis). Hourly cap covers brute-force; the in-memory dedupe
+  // below covers same-second double-clicks.
+  const rl = checkRateLimit(req, {
+    key: 'agent-snapshot',
+    limit: 12,
+    windowMs: 60 * 60_000,
+    identity: org.id,
+  })
+  if (!rl.ok) return rateLimitResponse(rl)
+
   const last = lastRunByOrg.get(org.id) || 0
   if (Date.now() - last < DEDUPE_MS) {
     return NextResponse.json(

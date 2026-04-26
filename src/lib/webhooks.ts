@@ -37,6 +37,7 @@ export type WebhookEvent =
   | 'agent.approval.requested'
   | 'agent.killswitch.activated'
   | 'ad.policy_rejected'
+  | 'creative.review_requested'
 
 export const WEBHOOK_EVENTS: WebhookEvent[] = [
   'campaign.launched',
@@ -54,6 +55,7 @@ export const WEBHOOK_EVENTS: WebhookEvent[] = [
   'agent.approval.requested',
   'agent.killswitch.activated',
   'ad.policy_rejected',
+  'creative.review_requested',
 ]
 
 export function generateWebhookSecret(): string {

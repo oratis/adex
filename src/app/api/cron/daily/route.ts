@@ -6,6 +6,7 @@ import { AppsFlyerClient } from '@/lib/platforms/appsflyer'
 import { AdjustClient } from '@/lib/platforms/adjust'
 import { getAdapter, isAdaptablePlatform } from '@/lib/platforms/registry'
 import { runAdapterSync } from '@/lib/sync/report-writer'
+import { refreshBudgetSpent } from '@/lib/budget/refresh'
 
 /**
  * POST /api/cron/daily
@@ -143,6 +144,7 @@ export async function POST(req: NextRequest) {
     orgName: string
     syncResults: Record<string, unknown>
     digestEmailsSent: number
+    budgetsTouched?: number
   }> = []
 
   for (const org of orgs) {
@@ -239,7 +241,23 @@ active campaigns ${activeCampaigns}. Cite numbers.`,
       if (result.ok) digestEmailsSent++
     }
 
-    summary.push({ orgId: org.id, orgName: org.name, syncResults, digestEmailsSent })
+    // After sync writes today's Reports, refresh Budget.spent for this org.
+    // Best-effort; don't fail the digest run if it errors.
+    let budgetsTouched = 0
+    try {
+      const r = await refreshBudgetSpent({ orgId: org.id })
+      budgetsTouched = r.budgetsTouched
+    } catch (err) {
+      console.error(`[cron/daily] refreshBudgetSpent failed for org ${org.id}:`, err)
+    }
+
+    summary.push({
+      orgId: org.id,
+      orgName: org.name,
+      syncResults,
+      digestEmailsSent,
+      budgetsTouched,
+    })
   }
 
   return NextResponse.json({ ok: true, date: endDate, orgs: summary })

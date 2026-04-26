@@ -70,6 +70,50 @@ export default function CampaignsPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState<FormState>(emptyForm)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+
+  function toggleSelect(id: string) {
+    const next = new Set(selected)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelected(next)
+  }
+
+  async function bulkStatus(status: 'active' | 'paused' | 'archived') {
+    if (selected.size === 0) return
+    if (!confirm(`Set ${selected.size} campaign(s) to ${status}?`)) return
+    setBulkBusy(true)
+    try {
+      const res = await fetch(api('/api/campaigns/bulk-status'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selected), status }),
+      })
+      const data = (await res.json()) as { results?: { id: string; ok: boolean; error?: string }[] }
+      const okIds = new Set((data.results || []).filter((r) => r.ok).map((r) => r.id))
+      const errors = (data.results || []).filter((r) => !r.ok)
+      if (errors.length > 0) {
+        toast({
+          variant: 'error',
+          title: `${errors.length} of ${selected.size} failed`,
+          description: errors.slice(0, 3).map((e) => `${e.id}: ${e.error}`).join('\n'),
+        })
+      } else {
+        toast({ variant: 'success', title: `Bulk ${status} succeeded` })
+      }
+      setCampaigns(
+        campaigns.map((c) =>
+          okIds.has(c.id)
+            ? { ...c, status: status === 'archived' ? 'completed' : status }
+            : c
+        )
+      )
+      setSelected(new Set())
+    } finally {
+      setBulkBusy(false)
+    }
+  }
 
   useEffect(() => {
     loadCampaigns()
@@ -253,11 +297,34 @@ export default function CampaignsPage() {
         </Card>
       ) : (
         <div className="space-y-3">
+          {selected.size > 0 && (
+            <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+              <span className="text-gray-700 mr-auto">{selected.size} selected</span>
+              <Button size="sm" onClick={() => bulkStatus('paused')} disabled={bulkBusy}>
+                Pause selected
+              </Button>
+              <Button size="sm" onClick={() => bulkStatus('active')} disabled={bulkBusy}>
+                Resume selected
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => bulkStatus('archived')} disabled={bulkBusy}>
+                Archive selected
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+            </div>
+          )}
           {campaigns.map((c) => (
             <Card key={c.id}>
               <CardContent className="py-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4 min-w-0 flex-1">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(c.id)}
+                      onChange={() => toggleSelect(c.id)}
+                      aria-label={`Select ${c.name}`}
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <Link

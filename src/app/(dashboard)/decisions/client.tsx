@@ -70,15 +70,22 @@ export function DecisionsClient({
   role: string
   config: AgentConfig
   decisions: Decision[]
-  filter: { status: string | null; severity: string | null }
+  filter: {
+    status: string | null
+    severity: string | null
+    campaignId: string | null
+    since: string | null
+    until: string | null
+  }
 }) {
   const [config, setConfig] = useState(initialConfig)
   const [running, setRunning] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [campaignDraft, setCampaignDraft] = useState(filter.campaignId || '')
   const isAdmin = role === 'owner' || role === 'admin'
 
-  function setFilter(key: 'status' | 'severity', value: string) {
+  function setFilter(key: 'status' | 'severity' | 'campaignId' | 'since' | 'until', value: string) {
     const url = new URL(window.location.href)
     if (value) url.searchParams.set(key, value)
     else url.searchParams.delete(key)
@@ -239,7 +246,31 @@ export function DecisionsClient({
           <option value="warning">warning</option>
           <option value="alert">alert</option>
         </select>
-        {(filter.status || filter.severity) && (
+        <input
+          type="text"
+          value={campaignDraft}
+          onChange={(e) => setCampaignDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') setFilter('campaignId', campaignDraft.trim())
+          }}
+          placeholder="campaignId"
+          className="border rounded px-2 py-1 font-mono text-xs"
+        />
+        <input
+          type="date"
+          value={filter.since || ''}
+          onChange={(e) => setFilter('since', e.target.value)}
+          className="border rounded px-2 py-1"
+          aria-label="since"
+        />
+        <input
+          type="date"
+          value={filter.until || ''}
+          onChange={(e) => setFilter('until', e.target.value)}
+          className="border rounded px-2 py-1"
+          aria-label="until"
+        />
+        {(filter.status || filter.severity || filter.campaignId || filter.since || filter.until) && (
           <Button variant="ghost" onClick={() => (window.location.href = '/decisions')}>
             Clear
           </Button>

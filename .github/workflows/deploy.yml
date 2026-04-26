@@ -1,0 +1,66 @@
+# Cloud Run deploy via Workload Identity Federation.
+#
+# One-time setup (run by repo owner in GCP console):
+#   1. Enable: artifactregistry.googleapis.com, run.googleapis.com, cloudbuild.googleapis.com
+#   2. Create a service account, grant: roles/run.admin, roles/iam.serviceAccountUser,
+#      roles/cloudbuild.builds.editor, roles/artifactregistry.writer
+#   3. Create a Workload Identity Provider for GitHub OIDC
+#   4. In repo Settings → Secrets:
+#        GCP_PROJECT_ID, GCP_REGION, GCP_SERVICE,
+#        GCP_WIF_PROVIDER, GCP_DEPLOY_SA, GCP_SQL_INSTANCE,
+#        GCP_RUNTIME_SA, GCP_RUNTIME_SECRETS
+#   5. Optional: comment out the `if: false` to enable auto-deploy.
+#
+# Until that's set up the workflow stays disabled (`if: false`) so it does
+# nothing on push. When you flip it on, the job builds via cloudbuild.yaml
+# and updates the Cloud Run service in-place.
+
+name: Deploy (Cloud Run)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: false  # ← flip to `true` (or remove the line) when secrets are configured
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for Workload Identity Federation
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Submit build + deploy via cloudbuild.yaml
+        run: |
+          gcloud builds submit \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --config cloudbuild.yaml \
+            --substitutions \
+              _SERVICE=${{ secrets.GCP_SERVICE }},\
+_REGION=${{ secrets.GCP_REGION }},\
+_SQL_INSTANCE=${{ secrets.GCP_SQL_INSTANCE }},\
+_SECRETS=${{ secrets.GCP_RUNTIME_SECRETS }},\
+_SERVICE_ACCOUNT=${{ secrets.GCP_RUNTIME_SA }}
+
+      - name: Smoke check post-deploy
+        run: |
+          URL=$(gcloud run services describe ${{ secrets.GCP_SERVICE }} \
+            --region ${{ secrets.GCP_REGION }} --format='value(status.url)')
+          echo "Service URL: $URL"
+          # Basic liveness — root redirects to /adex (basePath); just ensure no 5xx
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/adex")
+          echo "Liveness: HTTP $STATUS"
+          [ "$STATUS" -lt 500 ] || (echo "Server returned 5xx; failing job"; exit 1)

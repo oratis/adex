@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { fireWebhook } from '@/lib/webhooks'
 import { SeedreamClient } from '@/lib/platforms/seedream'
 import { SeedanceClient } from '@/lib/platforms/seedance'
 import type { ToolDefinition } from '../types'
@@ -131,6 +132,17 @@ export const generateCreativeVariantTool: ToolDefinition<Input> = {
         error: `Generator failed: ${err instanceof Error ? err.message : 'unknown'}`,
       }
     }
+
+    fireWebhook({
+      orgId: ctx.orgId,
+      event: 'creative.review_requested',
+      data: {
+        creativeId: created.id,
+        type: input.type,
+        prompt: input.prompt,
+        decisionId: ctx.decisionId,
+      },
+    }).catch(() => {})
 
     return {
       ok: true,

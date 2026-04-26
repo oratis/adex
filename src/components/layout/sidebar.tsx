@@ -22,9 +22,12 @@ const navItems = [
   { href: '/experiments', key: 'nav.experiments', icon: '🧪', fallback: 'Experiments' },
   { href: '/prompts',    key: 'nav.prompts',    icon: '📝', fallback: 'Prompts' },
   { href: '/agent-cost', key: 'nav.agent_cost', icon: '💵', fallback: 'LLM cost' },
+  { href: '/agent-stats', key: 'nav.agent_stats', icon: '📈', fallback: 'Agent stats' },
   { href: '/agent-onboarding', key: 'nav.agent_onboarding', icon: '🚀', fallback: 'Onboarding' },
   { href: '/webhooks',   key: 'nav.webhooks',   icon: '📡', fallback: 'Webhooks' },
   { href: '/creatives/review', key: 'nav.creative_review', icon: '🖼️', fallback: 'Creative review' },
+  { href: '/orphans',    key: 'nav.orphans',    icon: '👻', fallback: 'Orphan campaigns' },
+  { href: '/audit',      key: 'nav.audit',      icon: '📜', fallback: 'Audit log' },
   { href: '/settings',   key: 'nav.settings',   icon: '⚙️' },
 ]
 

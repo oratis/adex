@@ -1,0 +1,74 @@
+# Cloud Build pipeline for Cloud Run deploy.
+#
+# Usage A — manual: `gcloud builds submit --config cloudbuild.yaml`
+# Usage B — auto:   create a Cloud Build trigger in GCP console pointing at
+#                   github.com/oratis/adex on `^main$`, with this file path.
+#
+# Substitutions you'll set in the trigger (or pass with --substitutions=):
+#   _SERVICE          — Cloud Run service name              (default: adex)
+#   _REGION           — Cloud Run region                    (default: us-central1)
+#   _SQL_INSTANCE     — Cloud SQL connection string          (PROJECT:REGION:NAME)
+#   _SECRETS          — comma-separated env=secret pairs    (e.g. DATABASE_URL=DATABASE_URL:latest,CRON_SECRET=CRON_SECRET:latest)
+#   _SERVICE_ACCOUNT  — runtime service account             (used by Cloud Run; needs Cloud SQL Client + Secret Accessor + Storage Object Admin)
+
+substitutions:
+  _SERVICE: adex
+  _REGION: us-central1
+  _SQL_INSTANCE: ''
+  _SECRETS: ''
+  _SERVICE_ACCOUNT: ''
+
+steps:
+  - id: build-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - gcr.io/$PROJECT_ID/${_SERVICE}:$SHORT_SHA
+      - --tag
+      - gcr.io/$PROJECT_ID/${_SERVICE}:latest
+      - .
+
+  - id: push-image
+    name: gcr.io/cloud-builders/docker
+    args: [push, --all-tags, gcr.io/$PROJECT_ID/${_SERVICE}]
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        DEPLOY_ARGS=(
+          run deploy "${_SERVICE}"
+          --image "gcr.io/$PROJECT_ID/${_SERVICE}:$SHORT_SHA"
+          --region "${_REGION}"
+          --platform managed
+          --allow-unauthenticated
+          --port 8080
+          --cpu 1
+          --memory 1Gi
+          --max-instances 10
+          --min-instances 0
+        )
+        if [ -n "${_SQL_INSTANCE}" ]; then
+          DEPLOY_ARGS+=(--add-cloudsql-instances "${_SQL_INSTANCE}")
+        fi
+        if [ -n "${_SECRETS}" ]; then
+          DEPLOY_ARGS+=(--update-secrets "${_SECRETS}")
+        fi
+        if [ -n "${_SERVICE_ACCOUNT}" ]; then
+          DEPLOY_ARGS+=(--service-account "${_SERVICE_ACCOUNT}")
+        fi
+        gcloud "${DEPLOY_ARGS[@]}"
+
+images:
+  - gcr.io/$PROJECT_ID/${_SERVICE}:$SHORT_SHA
+  - gcr.io/$PROJECT_ID/${_SERVICE}:latest
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s
