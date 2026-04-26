@@ -50,3 +50,16 @@ next-env.d.ts
 # local sqlite (legacy; project uses Postgres now)
 *.db
 dev.db
+
+# claude code harness — user/machine-specific overrides and runtime artefacts
+# (the rest of .claude/ IS tracked: hooks, agents, commands, skills, rules,
+# agent-memory)
+.claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+
+# IDE / editor local config
+.vscode/
+.idea/
+*.swp
+*.swo
