@@ -13,6 +13,11 @@ model User {
   name          String?
   password      String
   dailyReportEmail String?
+  // Platform-level admin (different from org-level admin/owner). Can issue
+  // invite codes + promote/demote other platform admins. Defaults to false;
+  // bootstrap admin via PLATFORM_ADMIN_EMAILS env var (see auth.ts
+  // isPlatformAdmin helper).
+  isPlatformAdmin  Boolean  @default(false)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -23,6 +28,28 @@ model User {
   budgets       Budget[]
   memberships   OrgMembership[]
   sessions      Session[]
+  invitesIssued InviteCode[] @relation("InviteCreator")
+  inviteUsed    InviteCode?  @relation("InviteRedeemer")
+}
+
+// Invite-only registration: only platform admins can mint codes; new accounts
+// must redeem one. Enforced server-side in /api/auth/register.
+model InviteCode {
+  id          String    @id @default(cuid())
+  code        String    @unique  // human-shareable token (e.g. "INVT-ABCD-1234")
+  createdBy   String                       // userId of issuing admin
+  note        String?                      // optional admin memo (who is this for)
+  expiresAt   DateTime?                    // null = never expires
+  usedAt      DateTime?
+  usedByUserId String?  @unique            // 1:1 — single-use
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+
+  creator     User  @relation("InviteCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  usedBy      User? @relation("InviteRedeemer", fields: [usedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdBy])
+  @@index([expiresAt, usedAt, revokedAt])
 }
 
 model Session {

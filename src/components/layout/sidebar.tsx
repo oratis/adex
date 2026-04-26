@@ -33,14 +33,21 @@ const navItems = [
 
 type Org = { id: string; name: string; role: string; isActive: boolean }
 
+const adminItems = [
+  { href: '/admin/invites', icon: '🎟️', fallback: 'Invite codes' },
+  { href: '/admin/users', icon: '👥', fallback: 'Users' },
+]
+
 export function Sidebar({
   userName,
   orgName,
   orgRole,
+  isPlatformAdmin,
 }: {
   userName?: string
   orgName?: string
   orgRole?: string
+  isPlatformAdmin?: boolean
 }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -184,6 +191,29 @@ export function Sidebar({
             </Link>
           )
         })}
+
+        {isPlatformAdmin && (
+          <>
+            <div className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-wider text-gray-500">
+              Platform admin
+            </div>
+            {adminItems.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                  pathname.startsWith(item.href)
+                    ? 'bg-purple-600/20 text-purple-300'
+                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                )}
+              >
+                <span className="text-lg">{item.icon}</span>
+                {item.fallback}
+              </Link>
+            ))}
+          </>
+        )}
       </nav>
       <div className="px-4 py-4 border-t border-gray-800 space-y-2">
         {userName && (

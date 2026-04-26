@@ -219,6 +219,44 @@ export async function requireAuth() {
   return user
 }
 
+// ============================================================================
+// Platform admin (cross-org)
+// ============================================================================
+
+/**
+ * Platform admins can mint invite codes and promote/demote other platform
+ * admins. They are different from org-level admins/owners.
+ *
+ * A user counts as platform admin if EITHER:
+ *   - User.isPlatformAdmin column = true, OR
+ *   - their email is in the comma-separated `PLATFORM_ADMIN_EMAILS` env var
+ *
+ * The env-var path exists so the very first install can bootstrap an admin
+ * without needing a manual SQL UPDATE — set the env var and that user is
+ * always a platform admin. Use it sparingly (1–2 emails); promote everyone
+ * else through the UI which writes to the column.
+ */
+export function isPlatformAdmin(user: { email: string; isPlatformAdmin?: boolean | null } | null): boolean {
+  if (!user) return false
+  if (user.isPlatformAdmin) return true
+  const env = (process.env.PLATFORM_ADMIN_EMAILS || '').toLowerCase()
+  if (!env) return false
+  const allow = env.split(',').map((s) => s.trim()).filter(Boolean)
+  return allow.includes(user.email.toLowerCase())
+}
+
+/**
+ * Throws if the current user isn't a platform admin. Use in any /api/admin/*
+ * route handler.
+ */
+export async function requirePlatformAdmin() {
+  const user = await requireAuth()
+  if (!isPlatformAdmin(user)) {
+    throw new Error('Platform admin only')
+  }
+  return user
+}
+
 export const SESSION_COOKIE = 'auth_token'
 export const SESSION_MAX_AGE = 60 * 60 * 24 * 30 // 30 days
 

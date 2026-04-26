@@ -1,6 +1,11 @@
 import { redirect } from 'next/navigation'
 import { Sidebar } from '@/components/layout/sidebar'
-import { getCurrentUser, getCurrentOrg, ensurePersonalOrg } from '@/lib/auth'
+import {
+  getCurrentUser,
+  getCurrentOrg,
+  ensurePersonalOrg,
+  isPlatformAdmin,
+} from '@/lib/auth'
 import { ToastProvider } from '@/components/ui/toast'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -23,6 +28,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           userName={user.name || user.email}
           orgName={ctx?.org.name}
           orgRole={ctx?.role}
+          isPlatformAdmin={isPlatformAdmin(user)}
         />
         <main className="flex-1 p-8 overflow-auto">
           {children}
