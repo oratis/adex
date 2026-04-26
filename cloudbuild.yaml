@@ -1,22 +1,28 @@
 # Cloud Build pipeline for Cloud Run deploy.
 #
+# Defaults are tuned for the live adexads.com service in gameclaw-492005.
+# Override any value with `--substitutions=_KEY=value` for other envs.
+#
 # Usage A — manual: `gcloud builds submit --config cloudbuild.yaml`
 # Usage B — auto:   create a Cloud Build trigger in GCP console pointing at
 #                   github.com/oratis/adex on `^main$`, with this file path.
 #
-# Substitutions you'll set in the trigger (or pass with --substitutions=):
-#   _SERVICE          — Cloud Run service name              (default: adex)
-#   _REGION           — Cloud Run region                    (default: us-central1)
-#   _SQL_INSTANCE     — Cloud SQL connection string          (PROJECT:REGION:NAME)
-#   _SECRETS          — comma-separated env=secret pairs    (e.g. DATABASE_URL=DATABASE_URL:latest,CRON_SECRET=CRON_SECRET:latest)
-#   _SERVICE_ACCOUNT  — runtime service account             (used by Cloud Run; needs Cloud SQL Client + Secret Accessor + Storage Object Admin)
+# Memory bumped from the legacy 512Mi → 1Gi to give the agent runtime
+# headroom (Tool Use API + prompt caching + adapter calls). max-instances=1
+# is intentional: the in-process queue + 1-min snapshot dedupe in
+# /api/agent/snapshot rely on a single-instance topology. If you scale out
+# horizontally, swap rate-limit.ts to Memorystore + queue/in-process.ts to
+# Cloud Tasks first.
 
 substitutions:
   _SERVICE: adex
   _REGION: us-central1
-  _SQL_INSTANCE: ''
-  _SECRETS: ''
-  _SERVICE_ACCOUNT: ''
+  _SQL_INSTANCE: gameclaw-492005:us-central1:gameclaw-db
+  _MEMORY: 1Gi
+  _CPU: '1'
+  _MAX_INSTANCES: '1'
+  _SECRETS: ''            # comma-separated env=secret pairs (Secret Manager)
+  _SERVICE_ACCOUNT: ''    # blank → keep current Cloud Run runtime SA
 
 steps:
   - id: build-image
@@ -47,10 +53,9 @@ steps:
           --platform managed
           --allow-unauthenticated
           --port 8080
-          --cpu 1
-          --memory 1Gi
-          --max-instances 10
-          --min-instances 0
+          --cpu "${_CPU}"
+          --memory "${_MEMORY}"
+          --max-instances "${_MAX_INSTANCES}"
         )
         if [ -n "${_SQL_INSTANCE}" ]; then
           DEPLOY_ARGS+=(--add-cloudsql-instances "${_SQL_INSTANCE}")
