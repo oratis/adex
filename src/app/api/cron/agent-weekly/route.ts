@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyCronAuth } from '@/lib/cron-auth'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mailer'
 
@@ -11,17 +12,8 @@ import { sendMail } from '@/lib/mailer'
  *
  * Sends per-org to every owner/admin with a configured dailyReportEmail.
  */
-function checkCronAuth(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET
-  if (!secret) return false
-  const provided =
-    req.headers.get('x-cron-secret') ||
-    req.headers.get('authorization')?.replace(/^Bearer /i, '')
-  return provided === secret
-}
-
 export async function POST(req: NextRequest) {
-  if (!checkCronAuth(req)) {
+  if (!(await verifyCronAuth(req, 'agent-weekly'))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)

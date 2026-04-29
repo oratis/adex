@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { api } from '@/lib/utils'
+import { EmptyState } from '@/components/ui/empty-state'
 
 type PromptVersion = {
   id: string
@@ -241,11 +242,17 @@ export function PromptsClient({
           </Card>
         ))}
         {grouped.length === 0 && (
-          <p className="text-sm text-gray-500">
-            No DB-backed prompt versions yet. The deployed agent is using the disk fallback at
-            <code> src/lib/agent/prompts/plan.v1.md</code>. Create a new version above to start
-            iterating.
-          </p>
+          <EmptyState
+            emoji="📝"
+            title="No DB-backed prompt versions · 还没有 DB prompt"
+            description={
+              <>
+                Agent 当前在用磁盘 fallback (<code>src/lib/agent/prompts/plan.v1.md</code>)。
+                <br />
+                Create a new version above to start iterating + A/B-testing prompts.
+              </>
+            }
+          />
         )}
       </div>
     </div>

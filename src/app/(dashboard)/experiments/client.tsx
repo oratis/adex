@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { api } from '@/lib/utils'
+import { EmptyState } from '@/components/ui/empty-state'
 
 type Arm = { name: string; adLinkId: string; trafficShare: number }
 type Experiment = {
@@ -78,10 +79,17 @@ export function ExperimentsClient({
       </div>
 
       {list.length === 0 && (
-        <p className="text-sm text-gray-500">
-          No experiments yet. Use the <code>start_experiment</code> agent tool or POST{' '}
-          <code>/api/agent/experiments</code>.
-        </p>
+        <EmptyState
+          emoji="🧪"
+          title="No experiments yet · 还没有实验"
+          description={
+            <>
+              开 A/B 实验有两种方式：让 Agent 用 <code>start_experiment</code> 工具自己起，
+              或者你手动调用 <code>POST /api/agent/experiments</code>。
+            </>
+          }
+          primaryAction={{ label: 'View Decisions', href: '/decisions' }}
+        />
       )}
 
       {list.map((e) => {

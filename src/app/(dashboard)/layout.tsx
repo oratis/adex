@@ -31,7 +31,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           orgRole={ctx?.role}
           isPlatformAdmin={isPlatformAdmin(user)}
         />
-        <main className="flex-1 p-8 overflow-auto">
+        <main className="flex-1 p-4 pt-14 md:p-8 md:pt-8 overflow-auto">
           {children}
         </main>
         <CommandPalette />

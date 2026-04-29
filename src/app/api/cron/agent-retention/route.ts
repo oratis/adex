@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyCronAuth } from '@/lib/cron-auth'
 import { prisma } from '@/lib/prisma'
 import { pruneOldSnapshots } from '@/lib/sync/snapshot'
 
@@ -13,17 +14,8 @@ import { pruneOldSnapshots } from '@/lib/sync/snapshot'
  *   - CampaignSnapshot     → 30 days dense + thin to 1/day for the next 11 months
  *   - PromptRun            → keep 90 days dense
  */
-function checkCronAuth(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET
-  if (!secret) return false
-  const provided =
-    req.headers.get('x-cron-secret') ||
-    req.headers.get('authorization')?.replace(/^Bearer /i, '')
-  return provided === secret
-}
-
 export async function POST(req: NextRequest) {
-  if (!checkCronAuth(req)) {
+  if (!(await verifyCronAuth(req, 'agent-retention'))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)

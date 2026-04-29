@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { api } from '@/lib/utils'
 import { EmptyState } from '@/components/ui/empty-state'
+import { HelpLink } from '@/components/ui/help-link'
 
 type AgentConfig = {
   enabled: boolean
@@ -154,7 +155,9 @@ export function DecisionsClient({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Agent Decisions</h1>
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          Agent Decisions <HelpLink section="decisions" />
+        </h1>
         <p className="text-sm text-gray-600 mt-1">
           Records of every plan-then-act cycle. Shadow mode = LLM proposes, nothing runs. Approval
           mode = decisions wait for a human in <a href="/approvals" className="text-blue-600 underline">/approvals</a>. Autonomous = guardrails enforce.

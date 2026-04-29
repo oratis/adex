@@ -5,6 +5,7 @@ import { verify } from '@/lib/agent/verify'
 import { captureCampaignSnapshots, detectDrift } from '@/lib/sync/snapshot'
 import { getAdapter, isAdaptablePlatform } from '@/lib/platforms/registry'
 import { checkRegressionDowngrade } from '@/lib/agent/safeguards'
+import { verifyCronAuth } from '@/lib/cron-auth'
 
 /**
  * POST /api/cron/agent
@@ -17,17 +18,8 @@ import { checkRegressionDowngrade } from '@/lib/agent/safeguards'
  *
  * Auth: same X-Cron-Secret header as /api/cron/daily.
  */
-function checkCronAuth(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET
-  if (!secret) return false
-  const provided =
-    req.headers.get('x-cron-secret') ||
-    req.headers.get('authorization')?.replace(/^Bearer /i, '')
-  return provided === secret
-}
-
 export async function POST(req: NextRequest) {
-  if (!checkCronAuth(req)) {
+  if (!(await verifyCronAuth(req, 'agent'))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

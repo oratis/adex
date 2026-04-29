@@ -51,6 +51,8 @@ const en: Dict = {
   'nav.admin.section': 'Platform admin',
   'nav.admin.invites': 'Invite codes',
   'nav.admin.users': 'Users',
+  'nav.admin.health': 'Platform health',
+  'nav.admin.cron_secrets': 'Cron secrets',
 
   // ===== Common actions =====
   'action.save': 'Save',
@@ -297,6 +299,8 @@ const zh: Dict = {
   'nav.admin.section': '平台管理员',
   'nav.admin.invites': '邀请码',
   'nav.admin.users': '用户',
+  'nav.admin.health': '平台健康',
+  'nav.admin.cron_secrets': 'Cron 密钥',
 
   // ===== 通用动作 =====
   'action.save': '保存',

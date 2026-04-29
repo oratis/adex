@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { api } from '@/lib/utils'
+import { EmptyState } from '@/components/ui/empty-state'
 
 type Creative = {
   id: string
@@ -91,7 +92,11 @@ export function ReviewClient({
       </div>
 
       {list.length === 0 && (
-        <p className="text-sm text-gray-500">Nothing in {filterStatus}.</p>
+        <EmptyState
+          emoji="🖼️"
+          title={`Nothing in ${filterStatus} · 暂无 ${filterStatus} 创意`}
+          description="Agent-generated creatives land here. Toggle filters above to see approved / rejected ones."
+        />
       )}
 
       <div className="grid gap-3 md:grid-cols-2">

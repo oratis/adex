@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { api } from '@/lib/utils'
+import { EmptyState } from '@/components/ui/empty-state'
 
 type Step = { id: string; toolName: string; input: string; guardrailReport: string | null }
 type Approval = {
@@ -114,7 +115,11 @@ export function ApprovalsClient({
       )}
 
       {list.length === 0 && (
-        <p className="text-sm text-gray-500">Nothing waiting on you. Nice.</p>
+        <EmptyState
+          emoji="✨"
+          title="Nothing waiting on you · 都处理完了"
+          description="No pending agent decisions need your approval right now. The agent will queue new ones here when guardrails block its proposed actions."
+        />
       )}
 
       {isAdmin && list.length > 0 && (

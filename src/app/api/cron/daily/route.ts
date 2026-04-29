@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyCronAuth } from '@/lib/cron-auth'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mailer'
 import { completeText, isLLMConfigured } from '@/lib/llm'
@@ -23,14 +24,6 @@ import { refreshBudgetSpent } from '@/lib/budget/refresh'
  *
  * Writes a single JSON status response at the end summarizing each org.
  */
-
-function checkCronAuth(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET
-  if (!secret) return false
-  const provided =
-    req.headers.get('x-cron-secret') || req.headers.get('authorization')?.replace(/^Bearer /i, '')
-  return provided === secret
-}
 
 type SyncMetrics = {
   impressions: number
@@ -123,7 +116,7 @@ function derived(m: SyncMetrics) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!checkCronAuth(req)) {
+  if (!(await verifyCronAuth(req, 'daily'))) {
     return NextResponse.json({ error: 'Unauthorized — set X-Cron-Secret header' }, { status: 401 })
   }
 

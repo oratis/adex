@@ -4,6 +4,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { describeAuditEvent, actionLabel } from '@/lib/humanize'
+import { EmptyState } from '@/components/ui/empty-state'
 
 type Event = {
   id: string
@@ -94,7 +95,13 @@ export function AuditClient({
         )}
       </div>
 
-      {events.length === 0 && <p className="text-sm text-gray-500">No matching events.</p>}
+      {events.length === 0 && (
+        <EmptyState
+          emoji="📜"
+          title="No matching events · 没有符合的审计记录"
+          description="Try removing filters, or invite a teammate / connect a platform / launch a campaign to start generating audit entries."
+        />
+      )}
 
       <div className="space-y-2">
         {events.map((e) => {

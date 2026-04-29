@@ -10,34 +10,61 @@ import { useT } from '@/components/i18n-provider'
 import { LOCALES, LOCALE_LABELS, type Locale } from '@/lib/i18n'
 
 const navItems = [
-  { href: '/dashboard',  key: 'nav.dashboard',  icon: '📊' },
-  { href: '/campaigns',  key: 'nav.campaigns',  icon: '🎯' },
-  { href: '/seedance2',  key: 'nav.seedance2',  icon: '🎬' },
-  { href: '/assets',     key: 'nav.assets',     icon: '📂' },
-  { href: '/creatives',  key: 'nav.creatives',  icon: '🎨' },
-  { href: '/budget',     key: 'nav.budget',     icon: '💰' },
-  { href: '/advisor',    key: 'nav.advisor',    icon: '🤖' },
-  { href: '/decisions',  key: 'nav.decisions',  icon: '🧠', fallback: 'Decisions' },
-  { href: '/approvals',  key: 'nav.approvals',  icon: '🛂', fallback: 'Approvals' },
-  { href: '/guardrails', key: 'nav.guardrails', icon: '🚧', fallback: 'Guardrails' },
-  { href: '/experiments', key: 'nav.experiments', icon: '🧪', fallback: 'Experiments' },
-  { href: '/prompts',    key: 'nav.prompts',    icon: '📝', fallback: 'Prompts' },
-  { href: '/agent-cost', key: 'nav.agent_cost', icon: '💵', fallback: 'LLM cost' },
-  { href: '/agent-stats', key: 'nav.agent_stats', icon: '📈', fallback: 'Agent stats' },
-  { href: '/agent-onboarding', key: 'nav.agent_onboarding', icon: '🚀', fallback: 'Onboarding' },
-  { href: '/webhooks',   key: 'nav.webhooks',   icon: '📡', fallback: 'Webhooks' },
-  { href: '/creatives/review', key: 'nav.creative_review', icon: '🖼️', fallback: 'Creative review' },
-  { href: '/orphans',    key: 'nav.orphans',    icon: '👻', fallback: 'Orphan campaigns' },
-  { href: '/audit',      key: 'nav.audit',      icon: '📜', fallback: 'Audit log' },
-  { href: '/settings',   key: 'nav.settings',   icon: '⚙️' },
+  { href: '/dashboard',        key: 'nav.dashboard',        icon: '📊' },
+  { href: '/campaigns',        key: 'nav.campaigns',        icon: '🎯' },
+  { href: '/seedance2',        key: 'nav.seedance2',        icon: '🎬' },
+  { href: '/assets',           key: 'nav.assets',           icon: '📂' },
+  { href: '/creatives',        key: 'nav.creatives',        icon: '🎨' },
+  { href: '/budget',           key: 'nav.budget',           icon: '💰' },
+  { href: '/advisor',          key: 'nav.advisor',          icon: '🤖' },
+  { href: '/decisions',        key: 'nav.decisions',        icon: '🧠' },
+  { href: '/approvals',        key: 'nav.approvals',        icon: '🛂' },
+  { href: '/guardrails',       key: 'nav.guardrails',       icon: '🚧' },
+  { href: '/experiments',      key: 'nav.experiments',      icon: '🧪' },
+  { href: '/prompts',          key: 'nav.prompts',          icon: '📝' },
+  { href: '/agent-cost',       key: 'nav.agent_cost',       icon: '💵' },
+  { href: '/agent-stats',      key: 'nav.agent_stats',      icon: '📈' },
+  { href: '/agent-onboarding', key: 'nav.agent_onboarding', icon: '🚀' },
+  { href: '/webhooks',         key: 'nav.webhooks',         icon: '📡' },
+  { href: '/creatives/review', key: 'nav.creative_review',  icon: '🖼️' },
+  { href: '/orphans',          key: 'nav.orphans',          icon: '👻' },
+  { href: '/audit',            key: 'nav.audit',            icon: '📜' },
+  { href: '/settings',         key: 'nav.settings',         icon: '⚙️' },
 ]
 
 type Org = { id: string; name: string; role: string; isActive: boolean }
 
 const adminItems = [
-  { href: '/admin/invites', icon: '🎟️', fallback: 'Invite codes' },
-  { href: '/admin/users', icon: '👥', fallback: 'Users' },
+  { href: '/admin/invites', icon: '🎟️', key: 'nav.admin.invites' },
+  { href: '/admin/users',   icon: '👥', key: 'nav.admin.users' },
+  { href: '/admin/health',  icon: '🩺', key: 'nav.admin.health' },
+  { href: '/admin/cron-secrets', icon: '🔑', key: 'nav.admin.cron_secrets' },
 ]
+
+// Hard-coded English fallbacks for nav labels — used when a translation
+// key isn't in the dictionary yet. Keeps sidebar functional during partial
+// i18n rollouts.
+const NAV_FALLBACK: Record<string, string> = {
+  'nav.decisions': 'Decisions',
+  'nav.approvals': 'Approvals',
+  'nav.guardrails': 'Guardrails',
+  'nav.experiments': 'Experiments',
+  'nav.prompts': 'Prompts',
+  'nav.agent_cost': 'LLM cost',
+  'nav.agent_stats': 'Agent stats',
+  'nav.agent_onboarding': 'Onboarding',
+  'nav.webhooks': 'Webhooks',
+  'nav.creative_review': 'Creative review',
+  'nav.orphans': 'Orphan campaigns',
+  'nav.audit': 'Audit log',
+  'nav.admin.invites': 'Invite codes',
+  'nav.admin.users': 'Users',
+  'nav.admin.health': 'Platform health',
+  'nav.admin.cron_secrets': 'Cron secrets',
+}
+function labelFallback(key: string): string {
+  return NAV_FALLBACK[key] || key
+}
 
 export function Sidebar({
   userName,
@@ -53,6 +80,7 @@ export function Sidebar({
   const pathname = usePathname()
   const router = useRouter()
   const [loggingOut, setLoggingOut] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
   const [orgs, setOrgs] = useState<Org[]>([])
   const [orgMenuOpen, setOrgMenuOpen] = useState(false)
   const { resolvedTheme, toggle } = useTheme()
@@ -101,11 +129,45 @@ export function Sidebar({
   }
 
   return (
-    <aside className="w-64 bg-gray-900 text-white min-h-screen flex flex-col">
-      <div className="px-6 py-5 border-b border-gray-800">
+    <>
+      {/* Mobile hamburger — only visible < md */}
+      <button
+        onClick={() => setMobileOpen(true)}
+        className="md:hidden fixed top-3 left-3 z-30 p-2 bg-gray-900 text-white rounded-lg shadow-lg"
+        aria-label="Open menu"
+      >
+        <span className="block w-5 h-0.5 bg-white mb-1.5" />
+        <span className="block w-5 h-0.5 bg-white mb-1.5" />
+        <span className="block w-5 h-0.5 bg-white" />
+      </button>
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/40 z-30"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+      <aside
+        className={cn(
+          'bg-gray-900 text-white min-h-screen flex flex-col z-40',
+          // Desktop: always visible, fixed width
+          'md:w-64 md:relative md:translate-x-0',
+          // Mobile: drawer that slides in from left
+          'fixed inset-y-0 left-0 w-64 transition-transform',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        )}
+      >
+      <div className="px-6 py-5 border-b border-gray-800 flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">
           <span className="text-blue-400">Ad</span>ex
         </h1>
+        <button
+          onClick={() => setMobileOpen(false)}
+          className="md:hidden text-gray-400 hover:text-white text-xl leading-none"
+          aria-label="Close menu"
+        >
+          ×
+        </button>
         <p className="text-xs text-gray-400 mt-1">Automated Ad Agent</p>
       </div>
 
@@ -175,7 +237,7 @@ export function Sidebar({
           // i18n keys not yet translated come back as the raw key — fall back
           // to a hard-coded English label when present (sidebar nav additions
           // shouldn't have to wait on localization to be usable).
-          const text = label === item.key && 'fallback' in item ? (item as { fallback?: string }).fallback || label : label
+          const text = label === item.key ? labelFallback(item.key) : label
           return (
             <Link
               key={item.href}
@@ -210,7 +272,10 @@ export function Sidebar({
                 )}
               >
                 <span className="text-lg">{item.icon}</span>
-                {item.fallback}
+                {(() => {
+                  const lbl = t(item.key)
+                  return lbl === item.key ? labelFallback(item.key) : lbl
+                })()}
               </Link>
             ))}
           </>
@@ -258,6 +323,7 @@ export function Sidebar({
           {loggingOut ? t('nav.logging_out') : t('nav.logout')}
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   )
 }

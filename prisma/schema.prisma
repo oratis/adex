@@ -447,6 +447,24 @@ model Asset {
 // Agent system (Phases 10–17)
 // =====================================================================
 
+// Per-cron rotatable secret. Replaces the single shared CRON_SECRET env
+// var: each cron path gets its own token with independent rotation, audit,
+// and revocation. The legacy env var still works as a fallback so the
+// switchover is non-breaking.
+model CronSecret {
+  id          String    @id @default(cuid())
+  cronPath    String    @unique             // e.g. "agent", "agent-expire"
+  tokenHash   String                        // SHA-256 of the issued token
+  description String?
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  rotatedAt   DateTime?
+  lastUsedAt  DateTime?
+  isActive    Boolean   @default(true)
+
+  @@index([isActive])
+}
+
 // P10 — single source of truth for "local entity ↔ platform entity" mapping
 model PlatformLink {
   id               String   @id @default(cuid())

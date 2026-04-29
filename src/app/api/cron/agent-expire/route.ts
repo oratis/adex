@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyCronAuth } from '@/lib/cron-auth'
 import { prisma } from '@/lib/prisma'
 
 /**
@@ -7,17 +8,8 @@ import { prisma } from '@/lib/prisma'
  * Sweep PendingApproval rows past expiresAt; auto-reject the underlying
  * Decision per the 72h policy (see 07-safety.md). Run once an hour.
  */
-function checkCronAuth(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET
-  if (!secret) return false
-  const provided =
-    req.headers.get('x-cron-secret') ||
-    req.headers.get('authorization')?.replace(/^Bearer /i, '')
-  return provided === secret
-}
-
 export async function POST(req: NextRequest) {
-  if (!checkCronAuth(req)) {
+  if (!(await verifyCronAuth(req, 'agent-expire'))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const now = new Date()

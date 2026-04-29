@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { api } from '@/lib/utils'
+import { EmptyState } from '@/components/ui/empty-state'
 
 type Delivery = {
   id: string
@@ -75,7 +76,17 @@ export function WebhookDeliveriesClient({
       </div>
 
       {list.length === 0 && (
-        <p className="text-sm text-gray-500">No {filterStatus} deliveries.</p>
+        <EmptyState
+          emoji="📡"
+          title={`No ${filterStatus} deliveries · 没有 ${filterStatus} 投递`}
+          description={
+            filterStatus === 'pending'
+              ? 'No webhook deliveries are currently retrying. Add a webhook in /settings → Webhooks to start.'
+              : filterStatus === 'abandoned'
+              ? 'Nothing has hit max attempts. The retry queue is healthy.'
+              : 'No successful deliveries on record (yet).'
+          }
+        />
       )}
 
       <div className="space-y-2">

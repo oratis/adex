@@ -163,10 +163,100 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Seed a handful of historical Decisions + Outcomes so /decisions and
+  // /agent-stats look populated immediately. mode=shadow makes it clear
+  // these are demo records, not real agent actions.
+  const now = Date.now()
+  const demoDecisions = [
+    {
+      severity: 'opportunity',
+      mode: 'shadow',
+      status: 'skipped',
+      rationale: '[Demo] Healthy 7d ROAS 4.8× on Summer fashion · US — no action needed.',
+      tool: 'noop',
+      campaignId: created[0]?.id,
+      hoursAgo: 1,
+      classification: null as string | null,
+    },
+    {
+      severity: 'alert',
+      mode: 'shadow',
+      status: 'skipped',
+      rationale:
+        '[Demo] Skincare retargeting · JP burning at ROAS 0.3×. In shadow mode — would have paused.',
+      tool: 'pause_campaign',
+      campaignId: created[2]?.id,
+      hoursAgo: 4,
+      classification: null,
+    },
+    {
+      severity: 'warning',
+      mode: 'approval_only',
+      status: 'executed',
+      rationale:
+        '[Demo] Mobile game install · SEA CTR dropped to 1.8%; reduced daily budget by 20% pending review.',
+      tool: 'adjust_daily_budget',
+      campaignId: created[1]?.id,
+      hoursAgo: 30,
+      classification: 'success',
+    },
+  ]
+
+  let decisionsCreated = 0
+  for (const d of demoDecisions) {
+    if (!d.campaignId) continue
+    const createdAt = new Date(now - d.hoursAgo * 3600_000)
+    const decision = await prisma.decision.create({
+      data: {
+        orgId: org.id,
+        triggerType: 'cron',
+        perceiveContext: '[Demo] Synthetic perceive context — see /api/setup/demo-data',
+        promptVersion: 'disk:agent.plan@v1',
+        rationale: d.rationale,
+        severity: d.severity,
+        mode: d.mode,
+        status: d.status,
+        requiresApproval: false,
+        createdAt,
+        executedAt: d.status === 'executed' ? createdAt : null,
+        llmCostUsd: 0.012,
+        llmInputTokens: 2400,
+        llmOutputTokens: 180,
+      },
+    })
+    await prisma.decisionStep.create({
+      data: {
+        decisionId: decision.id,
+        stepIndex: 0,
+        toolName: d.tool,
+        toolInput: JSON.stringify({ campaignId: d.campaignId, reason: '[Demo] synthetic step' }),
+        status: d.status === 'executed' ? 'executed' : 'skipped',
+        reversible: true,
+        executedAt: d.status === 'executed' ? createdAt : null,
+      },
+    })
+    if (d.classification) {
+      await prisma.decisionOutcome.create({
+        data: {
+          decisionId: decision.id,
+          measuredAt: new Date(createdAt.getTime() + 24 * 3600_000),
+          windowHours: 24,
+          metricsBefore: JSON.stringify({ spend: 50, revenue: 60, roas: 1.2 }),
+          metricsAfter: JSON.stringify({ spend: 40, revenue: 65, roas: 1.6 }),
+          delta: JSON.stringify({ spend: -10, revenue: 5, roas: 0.4 }),
+          classification: d.classification,
+          notes: '[Demo] synthetic outcome',
+        },
+      })
+    }
+    decisionsCreated++
+  }
+
   return NextResponse.json({
     ok: true,
     campaignsCreated: created.length,
     campaigns: created,
-    note: 'Demo campaigns prefixed with "[Demo]". Delete via /campaigns when done.',
+    decisionsCreated,
+    note: 'Demo data prefixed with "[Demo]". Delete via /campaigns + /decisions when done.',
   })
 }
