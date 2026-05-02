@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 interface Asset {
@@ -38,6 +39,7 @@ interface BreadcrumbItem {
 
 export default function AssetsPage() {
   const { toast } = useToast()
+  const confirm = useConfirm()
   const [assets, setAssets] = useState<Asset[]>([])
   const [filterType, setFilterType] = useState('')
   const [filterSource, setFilterSource] = useState('')
@@ -164,7 +166,10 @@ export default function AssetsPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this asset?')) return
+    if (
+      !(await confirm({ message: 'Delete this asset?', confirmLabel: 'Delete', variant: 'danger' }))
+    )
+      return
     const res = await fetch(api(`/api/assets/${id}`), { method: 'DELETE' })
     if (res.ok) {
       toast({ variant: 'success', title: 'Asset deleted' })
@@ -192,7 +197,15 @@ export default function AssetsPage() {
   async function handleBulkDelete() {
     const ids = Array.from(selectedIds)
     if (ids.length === 0) return
-    if (!confirm(`Delete ${ids.length} selected asset(s)? This cannot be undone.`)) return
+    if (
+      !(await confirm({
+        title: 'Bulk delete assets',
+        message: `Delete ${ids.length} selected asset(s)? This cannot be undone.`,
+        confirmLabel: 'Delete',
+        variant: 'danger',
+      }))
+    )
+      return
     try {
       const res = await fetch(api('/api/assets/bulk'), {
         method: 'POST',

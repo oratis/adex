@@ -114,11 +114,22 @@ const evaluators: Record<string, GuardrailEvaluator> = {
 
   /**
    * Org-level: only operate during configured "active hours" (UTC).
+   *
+   * Reads BOTH `startHourUtc/endHourUtc` (canonical, written by guardrails
+   * UI after local→UTC conversion) AND falls back to `startHourLocal/
+   * endHourLocal` if only those exist (manual SQL inserts, older form
+   * versions). Audit Critical #2 — without the fallback, a config row that
+   * only has the *Local fields silently passed every check.
    */
   agent_active_hours: async (_ctx, config) => {
-    const cfg = (config || {}) as { startHourUtc?: number; endHourUtc?: number }
-    const start = cfg.startHourUtc ?? 0
-    const end = cfg.endHourUtc ?? 24
+    const cfg = (config || {}) as {
+      startHourUtc?: number
+      endHourUtc?: number
+      startHourLocal?: number
+      endHourLocal?: number
+    }
+    const start = cfg.startHourUtc ?? cfg.startHourLocal ?? 0
+    const end = cfg.endHourUtc ?? cfg.endHourLocal ?? 24
     const hour = new Date().getUTCHours()
     if (hour < start || hour >= end) {
       return {
@@ -312,13 +323,35 @@ const evaluators: Record<string, GuardrailEvaluator> = {
   },
 }
 
-const BUILTIN_DEFAULTS: Array<{ rule: string; config: unknown }> = [
-  { rule: 'high_risk_requires_approval', config: {} },
-  { rule: 'llm_budget_cap', config: {} },
+type BuiltinDef = { rule: string; config: unknown; failClosed?: boolean }
+
+// Audit High #9 — `failClosed: true` means an evaluator EXCEPTION blocks
+// the step (safer for budget caps + active hours where silence = let
+// money burn). Default fail-open is fine for cooldowns / signal-quality
+// rules where missing data shouldn't lock the agent down.
+const BUILTIN_DEFAULTS: BuiltinDef[] = [
+  { rule: 'high_risk_requires_approval', config: {}, failClosed: true },
+  { rule: 'llm_budget_cap', config: {}, failClosed: true },
+  { rule: 'agent_active_hours', config: { startHourUtc: 0, endHourUtc: 24 }, failClosed: false },
+  { rule: 'managed_only', config: {}, failClosed: true },
   { rule: 'cooldown', config: { hours: 4 } },
   { rule: 'pause_only_with_conversions', config: { minSpendThreshold: 50, minImpressionsForSignal: 2000 } },
   { rule: 'max_per_day', config: { max: 20 } },
 ]
+
+const FAIL_CLOSED_RULES = new Set(
+  BUILTIN_DEFAULTS.filter((d) => d.failClosed).map((d) => d.rule)
+)
+
+function evaluatorErrorResult(rule: string, err: unknown): GuardrailEvalResult {
+  // Default fail-open. Override per rule via FAIL_CLOSED_RULES.
+  const failClosed = FAIL_CLOSED_RULES.has(rule)
+  return {
+    pass: !failClosed,
+    rule,
+    reason: `evaluator error (${failClosed ? 'fail-closed' : 'fail-open'}): ${err instanceof Error ? err.message : String(err)}`,
+  }
+}
 
 /**
  * Evaluate every applicable guardrail for a step. Returns the full report so
@@ -336,11 +369,7 @@ export async function evaluateGuardrails(
     try {
       results.push(await evaluator(ctx, def.config))
     } catch (err) {
-      results.push({
-        pass: true, // never block on evaluator failure — log and continue
-        rule: def.rule,
-        reason: `evaluator error: ${err instanceof Error ? err.message : String(err)}`,
-      })
+      results.push(evaluatorErrorResult(def.rule, err))
     }
   }
 
@@ -360,11 +389,7 @@ export async function evaluateGuardrails(
     try {
       results.push(await evaluator(ctx, cfg))
     } catch (err) {
-      results.push({
-        pass: true,
-        rule: g.rule,
-        reason: `evaluator error: ${err instanceof Error ? err.message : String(err)}`,
-      })
+      results.push(evaluatorErrorResult(g.rule, err))
     }
   }
 

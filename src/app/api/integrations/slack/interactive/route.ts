@@ -1,7 +1,7 @@
-import crypto from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { executeApprovedDecision } from '@/lib/agent/act'
+import { verifySlackSignature as verifySig } from '@/lib/slack-signature'
 import type { AgentMode } from '@/lib/agent/types'
 
 /**
@@ -24,22 +24,12 @@ import type { AgentMode } from '@/lib/agent/types'
  */
 
 function verifySlackSignature(req: NextRequest, raw: string): boolean {
-  const secret = process.env.SLACK_SIGNING_SECRET
-  if (!secret) return false
-  const ts = req.headers.get('x-slack-request-timestamp')
-  const sig = req.headers.get('x-slack-signature')
-  if (!ts || !sig) return false
-  // Reject older than 5 minutes
-  const age = Math.abs(Math.floor(Date.now() / 1000) - Number(ts))
-  if (!Number.isFinite(age) || age > 300) return false
-  const base = `v0:${ts}:${raw}`
-  const expected = `v0=${crypto.createHmac('sha256', secret).update(base).digest('hex')}`
-  if (sig.length !== expected.length) return false
-  try {
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
-  } catch {
-    return false
-  }
+  return verifySig({
+    secret: process.env.SLACK_SIGNING_SECRET,
+    timestamp: req.headers.get('x-slack-request-timestamp'),
+    signature: req.headers.get('x-slack-signature'),
+    rawBody: raw,
+  })
 }
 
 export async function POST(req: NextRequest) {
@@ -65,6 +55,25 @@ export async function POST(req: NextRequest) {
   const approveMatch = action.action_id.match(APPROVE_RE)
   const rejectMatch = action.action_id.match(REJECT_RE)
 
+  // Audit Critical #4: bind Slack user → Adex user. Without this, anyone
+  // in the Slack workspace could approve/reject. Lookup is by
+  // User.slackUserId (set via /settings → Profile) and confirms the user is
+  // owner/admin in the decision's org.
+  const slackUserId = payload.user?.id
+  if (!slackUserId) {
+    return NextResponse.json({ text: 'No Slack user id on action — refusing.' })
+  }
+  const adexUser = await prisma.user.findUnique({
+    where: { slackUserId },
+    include: { memberships: true },
+  })
+  if (!adexUser) {
+    return NextResponse.json({
+      text: `❌ Slack user @${payload.user?.username || slackUserId} is not linked to an Adex account. Bind it in Settings → Profile first.`,
+      response_type: 'ephemeral',
+    })
+  }
+
   if (approveMatch) {
     const decisionId = approveMatch[1]
     const decision = await prisma.decision.findUnique({
@@ -72,19 +81,18 @@ export async function POST(req: NextRequest) {
       include: { approval: true },
     })
     if (!decision || decision.status !== 'pending') {
+      return NextResponse.json({ text: `Decision ${decisionId} is not pending; nothing to do.` })
+    }
+    const membership = adexUser.memberships.find((m) => m.orgId === decision.orgId)
+    if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
       return NextResponse.json({
-        text: `Decision ${decisionId} is not pending; nothing to do.`,
+        text: `❌ ${adexUser.email} is not an owner/admin of the org that owns this decision.`,
+        response_type: 'ephemeral',
       })
     }
-    // We can't trust the Slack user as a real Adex user (no SSO yet) — but
-    // we record the slack username for audit, and the approval gets attributed
-    // to the system. Tighten by adding SLACK_USER_ID → adex User mapping later.
     await prisma.decision.update({
       where: { id: decisionId },
-      data: {
-        approvedBy: `slack:${payload.user?.id || 'unknown'}`,
-        approvedAt: new Date(),
-      },
+      data: { approvedBy: adexUser.id, approvedAt: new Date() },
     })
     if (decision.approval) {
       await prisma.pendingApproval.delete({ where: { id: decision.approval.id } })
@@ -95,7 +103,7 @@ export async function POST(req: NextRequest) {
       decision.mode as AgentMode
     )
     return NextResponse.json({
-      text: `✅ Decision approved by ${payload.user?.username || 'Slack user'} → ${result.status}`,
+      text: `✅ Decision approved by ${adexUser.name || adexUser.email} → ${result.status}`,
       replace_original: false,
       response_type: 'ephemeral',
     })
@@ -108,16 +116,21 @@ export async function POST(req: NextRequest) {
       include: { approval: true },
     })
     if (!decision || decision.status !== 'pending') {
+      return NextResponse.json({ text: `Decision ${decisionId} is not pending; nothing to do.` })
+    }
+    const membership = adexUser.memberships.find((m) => m.orgId === decision.orgId)
+    if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
       return NextResponse.json({
-        text: `Decision ${decisionId} is not pending; nothing to do.`,
+        text: `❌ ${adexUser.email} is not an owner/admin of the org that owns this decision.`,
+        response_type: 'ephemeral',
       })
     }
     await prisma.decision.update({
       where: { id: decisionId },
       data: {
         status: 'rejected',
-        rejectedReason: `via Slack by ${payload.user?.username || payload.user?.id || 'unknown'}`,
-        approvedBy: `slack:${payload.user?.id || 'unknown'}`,
+        rejectedReason: `via Slack by ${adexUser.email}`,
+        approvedBy: adexUser.id,
         approvedAt: new Date(),
       },
     })
@@ -125,7 +138,7 @@ export async function POST(req: NextRequest) {
       await prisma.pendingApproval.delete({ where: { id: decision.approval.id } })
     }
     return NextResponse.json({
-      text: `🛑 Decision rejected by ${payload.user?.username || 'Slack user'}`,
+      text: `🛑 Decision rejected by ${adexUser.name || adexUser.email}`,
       replace_original: false,
       response_type: 'ephemeral',
     })

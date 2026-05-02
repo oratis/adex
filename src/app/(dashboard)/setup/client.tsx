@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 type Step = {
@@ -28,10 +29,19 @@ export function SetupWizard({
   agentEnabled: boolean
 }) {
   const router = useRouter()
+  const confirm = useConfirm()
   const [seeding, setSeeding] = useState(false)
 
   async function loadDemoData() {
-    if (!confirm('Load 3 demo campaigns + 7 days of fake metrics?\n\n这是一个安全的演示数据集，不会接触任何真实平台。可以随时手动删除（在 /campaigns）。')) return
+    if (
+      !(await confirm({
+        title: 'Load demo data?',
+        message:
+          'Load 3 demo campaigns + 7 days of fake metrics?\n\n这是一个安全的演示数据集，不会接触任何真实平台。可以随时手动删除（在 /campaigns）。',
+        confirmLabel: 'Load demo',
+      }))
+    )
+      return
     setSeeding(true)
     try {
       const res = await fetch(api('/api/setup/demo-data'), { method: 'POST' })

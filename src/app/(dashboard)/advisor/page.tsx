@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { formatCurrency, formatNumber, api } from '@/lib/utils'
 
 interface Report {
@@ -34,6 +35,7 @@ interface AdvisorResponse {
 
 export default function AdvisorPage() {
   const { toast } = useToast()
+  const confirm = useConfirm()
   const [reports, setReports] = useState<Report[]>([])
   const [campaignCount, setCampaignCount] = useState(0)
   const [advice, setAdvice] = useState<Advice[]>([])
@@ -81,7 +83,7 @@ export default function AdvisorPage() {
   async function applyAction(idx: number, action: AdviceAction) {
     const actionLabel =
       action.type === 'pause_campaign' ? 'Pause this campaign' : 'Resume this campaign'
-    if (!confirm(`${actionLabel}?`)) return
+    if (!(await confirm({ message: `${actionLabel}?`, confirmLabel: actionLabel }))) return
     setApplying(idx)
     try {
       const res = await fetch(api('/api/advisor/apply'), {

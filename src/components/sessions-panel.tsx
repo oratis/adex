@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 type Session = {
@@ -51,6 +52,7 @@ function parseBrowser(ua: string | null): string {
 
 export function SessionsPanel() {
   const { toast } = useToast()
+  const confirm = useConfirm()
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [revoking, setRevoking] = useState<string | null>(null)
@@ -73,7 +75,7 @@ export function SessionsPanel() {
   }, [load])
 
   async function revoke(id: string) {
-    if (!confirm('Revoke this session?')) return
+    if (!(await confirm({ message: 'Revoke this session?', confirmLabel: 'Revoke', variant: 'danger' }))) return
     setRevoking(id)
     try {
       const res = await fetch(api(`/api/auth/sessions/${id}`), { method: 'DELETE' })
@@ -90,7 +92,14 @@ export function SessionsPanel() {
   async function revokeAllOthers() {
     const others = sessions.filter((s) => !s.isCurrent).length
     if (others === 0) return
-    if (!confirm(`Sign out of ${others} other session${others === 1 ? '' : 's'}?`)) return
+    if (
+      !(await confirm({
+        message: `Sign out of ${others} other session${others === 1 ? '' : 's'}?`,
+        confirmLabel: 'Sign out',
+        variant: 'danger',
+      }))
+    )
+      return
     try {
       const res = await fetch(api('/api/auth/sessions'), { method: 'DELETE' })
       if (!res.ok) throw new Error()

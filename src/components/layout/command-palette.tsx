@@ -42,6 +42,8 @@ const COMMANDS: Command[] = [
   // Admin
   { label: 'Admin · invite codes', zhLabel: '管理员 · 邀请码', href: '/admin/invites' },
   { label: 'Admin · users', zhLabel: '管理员 · 用户', href: '/admin/users' },
+  { label: 'Admin · platform health', zhLabel: '管理员 · 平台健康', href: '/admin/health', keywords: ['ops', 'monitoring', 'metrics'] },
+  { label: 'Admin · cron secrets', zhLabel: '管理员 · 定时任务密钥', href: '/admin/cron-secrets', keywords: ['rotate', 'token', 'scheduler'] },
 ]
 
 export function CommandPalette() {

@@ -4,8 +4,10 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { SeverityBadge } from '@/components/ui/severity-badge'
 import { api } from '@/lib/utils'
 import { EmptyState } from '@/components/ui/empty-state'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 
 type Step = { id: string; toolName: string; input: string; guardrailReport: string | null }
 type Approval = {
@@ -16,13 +18,6 @@ type Approval = {
   decision: { rationale: string; severity: string; steps: Step[] }
 }
 
-const SEVERITY_COLORS: Record<string, string> = {
-  info: 'bg-gray-100 text-gray-700',
-  opportunity: 'bg-emerald-100 text-emerald-700',
-  warning: 'bg-amber-100 text-amber-700',
-  alert: 'bg-rose-100 text-rose-700',
-}
-
 export function ApprovalsClient({
   role,
   approvals,
@@ -30,6 +25,7 @@ export function ApprovalsClient({
   role: string
   approvals: Approval[]
 }) {
+  const confirm = useConfirm()
   const [busy, setBusy] = useState<string | null>(null)
   const [list, setList] = useState(approvals)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -74,7 +70,14 @@ export function ApprovalsClient({
   async function bulk(action: 'approve' | 'reject') {
     if (selected.size === 0) return
     const ids = Array.from(selected)
-    if (!confirm(`${action === 'approve' ? 'Approve' : 'Reject'} ${ids.length} decision(s)?`))
+    if (
+      !(await confirm({
+        title: action === 'approve' ? 'Approve decisions' : 'Reject decisions',
+        message: `${action === 'approve' ? 'Approve' : 'Reject'} ${ids.length} decision(s)?`,
+        confirmLabel: action === 'approve' ? 'Approve' : 'Reject',
+        variant: action === 'approve' ? 'primary' : 'danger',
+      }))
+    )
       return
     let reason: string | null = null
     if (action === 'reject') reason = prompt('Reason for rejection (optional):') || ''
@@ -162,9 +165,7 @@ export function ApprovalsClient({
                   className="mr-1"
                 />
               )}
-              <Badge className={SEVERITY_COLORS[a.decision.severity] || ''}>
-                {a.decision.severity}
-              </Badge>
+              <SeverityBadge severity={a.decision.severity} />
               {isStale && (
                 <Badge className="bg-amber-100 text-amber-700">⏱ {elapsedH.toFixed(0)}h old</Badge>
               )}

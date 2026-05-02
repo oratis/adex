@@ -13,6 +13,9 @@ import { pruneOldSnapshots } from '@/lib/sync/snapshot'
  *   - Report level=account  → keep forever
  *   - CampaignSnapshot     → 30 days dense + thin to 1/day for the next 11 months
  *   - PromptRun            → keep 90 days dense
+ *   - Decision             → 13 months for executed/rolled_back/failed (audit
+ *                            trail); 90 days for shadow/skipped/rejected
+ *                            (audit Med #27)
  */
 export async function POST(req: NextRequest) {
   if (!(await verifyCronAuth(req, 'agent-retention'))) {
@@ -29,6 +32,21 @@ export async function POST(req: NextRequest) {
   })
   const promptRuns = await prisma.promptRun.deleteMany({
     where: { createdAt: { lt: ninetyDaysAgo } },
+  })
+
+  // Audit Med #27: prune old Decisions. Cascades drop steps + outcome +
+  // approval rows. Two retention tiers:
+  //   - 90d: shadow / skipped / rejected (no real-world side effects)
+  //   - 13mo: executed / failed / rolled_back (need long audit trail)
+  const decisionsShadow = await prisma.decision.deleteMany({
+    where: {
+      createdAt: { lt: ninetyDaysAgo },
+      status: { in: ['skipped', 'rejected', 'pending'] },
+      mode: 'shadow',
+    },
+  })
+  const decisionsOld = await prisma.decision.deleteMany({
+    where: { createdAt: { lt: thirteenMonthsAgo } },
   })
 
   // Snapshot thinning runs per-org so the dedupe map stays bounded.
@@ -49,6 +67,8 @@ export async function POST(req: NextRequest) {
       reports_ad_adgroup: adReports.count,
       reports_campaign: campaignReports.count,
       prompt_runs: promptRuns.count,
+      decisions_shadow_90d: decisionsShadow.count,
+      decisions_13mo: decisionsOld.count,
       snapshots_thinned: snapshotsThinned,
     },
   })

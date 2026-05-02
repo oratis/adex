@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { api } from '@/lib/utils'
 import { EmptyState } from '@/components/ui/empty-state'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 
 type PromptVersion = {
   id: string
@@ -24,6 +25,7 @@ export function PromptsClient({
   role: string
   versions: PromptVersion[]
 }) {
+  const confirm = useConfirm()
   const [list, setList] = useState(versions)
   const [showNew, setShowNew] = useState(false)
   const [draft, setDraft] = useState({
@@ -84,7 +86,13 @@ export function PromptsClient({
   }
 
   async function promote(id: string) {
-    if (!confirm('Promote this version to default for its prompt name?')) return
+    if (
+      !(await confirm({
+        message: 'Promote this version to default for its prompt name?',
+        confirmLabel: 'Promote',
+      }))
+    )
+      return
     setBusy(true)
     try {
       const res = await fetch(api(`/api/agent/prompts/${id}/promote`), { method: 'POST' })

@@ -65,8 +65,20 @@ export type ProposedDecision = {
   steps: ProposedDecisionStep[]
 }
 
+export type PlanValidationDrop = {
+  kind: string
+  detail: string
+}
+
 export type PlanResult = {
   decisions: ProposedDecision[]
+  /**
+   * Validation drops surfaced from the LLM tool-use response. Each entry
+   * describes a step or decision that was silently filtered out before we
+   * persisted it. Surfaced in Decision.perceiveContext for debuggability
+   * (audit High #13).
+   */
+  drops?: PlanValidationDrop[]
   llm: {
     model: string
     inputTokens: number
@@ -104,6 +116,19 @@ export type ToolDefinition<I = unknown> = {
   inputSchema: Record<string, unknown>
   reversible: boolean
   riskLevel: ToolRiskLevel
+  /**
+   * If true, executing this tool produces undefined behaviour when the
+   * preceding step in the same Decision failed. The act() runner uses this
+   * to short-circuit downstream steps after a failure (audit High #12).
+   * Default false — most tools are independent.
+   */
+  dependsOnPriorSuccess?: boolean
+  /**
+   * If true, the tool's `inverse()` requires `previousX` fields in the
+   * input to be filled in. UI uses this to badge steps that can't be
+   * rolled back without those fields (audit High #14).
+   */
+  requiresPriorState?: boolean
   validate(input: unknown): I
   execute(ctx: ToolContext, input: I): Promise<ToolResult>
   /**

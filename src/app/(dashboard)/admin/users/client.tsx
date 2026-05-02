@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 type U = {
@@ -23,12 +24,21 @@ export function UsersClient({
   currentUserId: string
   users: U[]
 }) {
+  const confirm = useConfirm()
   const [users, setUsers] = useState(initial)
   const [busy, setBusy] = useState<string | null>(null)
 
   async function setAdmin(u: U, on: boolean) {
     if (u.id === currentUserId && !on) {
-      if (!confirm('You are about to remove your own platform-admin status. Continue?')) return
+      if (
+        !(await confirm({
+          title: 'Remove your own admin?',
+          message: 'You are about to remove your own platform-admin status. Continue?',
+          confirmLabel: 'Remove admin',
+          variant: 'danger',
+        }))
+      )
+        return
     }
     setBusy(u.id)
     try {

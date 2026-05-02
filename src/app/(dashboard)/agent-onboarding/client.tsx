@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 type Cfg = {
@@ -34,6 +35,7 @@ export function OnboardingClient({
   config: Cfg
   counts: { shadow: number; approval: number }
 }) {
+  const confirm = useConfirm()
   const [cfg, setCfg] = useState(initial)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -272,14 +274,18 @@ export function OnboardingClient({
               className="border-rose-300 text-rose-700 hover:bg-rose-50"
               onClick={async () => {
                 if (
-                  !confirm(
-                    'Decommission the agent for this workspace?\n\n' +
+                  !(await confirm({
+                    title: 'Decommission agent',
+                    message:
+                      'Decommission the agent for this workspace?\n\n' +
                       '- enabled → false\n' +
                       '- mode → shadow\n' +
                       '- All pending approvals → rejected\n' +
                       '- Autonomous allowlist → revoked\n\n' +
-                      'Historical records (decisions, outcomes, prompt runs, guardrails) are kept for audit.'
-                  )
+                      'Historical records (decisions, outcomes, prompt runs, guardrails) are kept for audit.',
+                    confirmLabel: 'Decommission',
+                    variant: 'danger',
+                  }))
                 )
                   return
                 setBusy(true)

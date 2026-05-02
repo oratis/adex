@@ -55,6 +55,13 @@ export class GoogleAdsClient {
     return data.access_token
   }
 
+  // Audit High #10 — exposed as public so adapter code doesn't have to
+  // cast through `as unknown`. Identifying headers (auth + dev token) need
+  // to be reachable for ad-hoc REST calls (e.g. campaignBudgets:mutate).
+  getAuthHeaders(): Record<string, string> {
+    return this.getHeaders()
+  }
+
   private getHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${this.currentAccessToken}`,

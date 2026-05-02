@@ -17,6 +17,11 @@ model User {
   // displaying timestamps and for the `agent_active_hours` guardrail.
   // Defaults to UTC; UI will offer a picker.
   timezone         String   @default("UTC")
+  // Slack user id (e.g. "U01ABCDEF") — required for Slack interactive
+  // approve/reject buttons to bind the action to an Adex User. Without
+  // this, anyone in the Slack workspace could approve agent decisions.
+  // Set via /settings → Profile.
+  slackUserId      String?  @unique
   // Platform-level admin (different from org-level admin/owner). Can issue
   // invite codes + promote/demote other platform admins. Defaults to false;
   // bootstrap admin via PLATFORM_ADMIN_EMAILS env var (see auth.ts

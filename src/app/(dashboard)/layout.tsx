@@ -7,6 +7,7 @@ import {
   isPlatformAdmin,
 } from '@/lib/auth'
 import { ToastProvider } from '@/components/ui/toast'
+import { ConfirmProvider } from '@/components/ui/confirm-dialog'
 import { CommandPalette } from '@/components/layout/command-palette'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -24,18 +25,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <ToastProvider>
-      <div className="flex min-h-screen bg-gray-50">
-        <Sidebar
-          userName={user.name || user.email}
-          orgName={ctx?.org.name}
-          orgRole={ctx?.role}
-          isPlatformAdmin={isPlatformAdmin(user)}
-        />
-        <main className="flex-1 p-4 pt-14 md:p-8 md:pt-8 overflow-auto">
-          {children}
-        </main>
-        <CommandPalette />
-      </div>
+      <ConfirmProvider>
+        <div className="flex min-h-screen bg-gray-50">
+          <Sidebar
+            userName={user.name || user.email}
+            orgName={ctx?.org.name}
+            orgRole={ctx?.role}
+            isPlatformAdmin={isPlatformAdmin(user)}
+          />
+          <main className="flex-1 p-4 pt-14 md:p-8 md:pt-8 overflow-auto">
+            {children}
+          </main>
+          <CommandPalette />
+        </div>
+      </ConfirmProvider>
     </ToastProvider>
   )
 }

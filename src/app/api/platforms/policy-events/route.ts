@@ -54,6 +54,18 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 })
   }
+
+  // Audit Critical #6: replay protection. Body MUST include `timestamp`
+  // (unix seconds) within ±5 minutes of now. Closes the gap where
+  // X-Cron-Secret fallback had no replay defense.
+  const ts = Number(body.timestamp)
+  if (!Number.isFinite(ts) || Math.abs(Math.floor(Date.now() / 1000) - ts) > 300) {
+    return NextResponse.json(
+      { error: 'body.timestamp (unix seconds) required, must be within 5 minutes of server clock' },
+      { status: 400 }
+    )
+  }
+
   const orgId = String(body.orgId || '')
   const platformAdId = String(body.platformAdId || '')
   const status = body.status

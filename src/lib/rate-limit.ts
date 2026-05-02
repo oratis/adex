@@ -28,7 +28,14 @@ const store: Map<string, Bucket> =
   ((globalThis as GlobalWithStore)[globalKey] = new Map<string, Bucket>())
 
 function clientKey(req: NextRequest): string {
-  // Cloud Run / proxies forward the real client IP in x-forwarded-for
+  // Cloud Run / proxies forward the real client IP in x-forwarded-for.
+  //
+  // Audit Low #33 — TRUST ASSUMPTION: this header is client-controllable
+  // when the app is reached directly without a trusted proxy in front.
+  // We rely on Cloud Run's load balancer to overwrite/append the real IP
+  // before the request hits us. If you deploy this behind a different
+  // proxy, verify it does the same; otherwise an attacker can spoof IPs
+  // here and bypass rate limits.
   const xff = req.headers.get('x-forwarded-for')
   if (xff) return xff.split(',')[0].trim()
   const realIp = req.headers.get('x-real-ip')

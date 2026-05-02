@@ -21,6 +21,8 @@ export const adjustDailyBudgetTool: ToolDefinition<Input> = {
     required: ['campaignId', 'newDailyBudget'],
   },
   reversible: true,
+  requiresPriorState: true, // needs previousDailyBudget for clean rollback
+  dependsOnPriorSuccess: true, // budget change after a failed pause is meaningless
   riskLevel: 'medium',
   validate(input) {
     const out: Input = {

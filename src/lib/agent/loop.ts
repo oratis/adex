@@ -63,24 +63,45 @@ export async function runAgentLoop(opts: {
   }
 
   result.llmCostUsd = planResult.llm.costUsd
-  // Charge the org's monthly LLM budget.
+
+  if (planResult.decisions.length === 0) {
+    // No decisions, but the LLM call still cost money — charge it.
+    await prisma.agentConfig.update({
+      where: { orgId: opts.orgId },
+      data: { monthlyLlmSpentUsd: { increment: planResult.llm.costUsd } },
+    })
+    return result
+  }
+
+  // Audit High #8: charge AFTER act() succeeds. Previously we charged
+  // before, which meant a thrown exception in act() recorded cost without
+  // recording the decisions — partial-failure budget leak.
+  let summary: Awaited<ReturnType<typeof act>>
+  try {
+    summary = await act({
+      orgId: opts.orgId,
+      mode: config.mode as AgentMode,
+      triggerType,
+      promptVersion: planResult.promptVersionId,
+      llm: planResult.llm,
+      proposed: planResult.decisions,
+      perceiveContextJson: JSON.stringify(snapshot),
+    })
+  } catch (err) {
+    errors.push(`act failed: ${err instanceof Error ? err.message : String(err)}`)
+    // Charge the LLM cost even on act() failure — the LLM call already
+    // happened. Without this, we'd undercount spend; the bug is in act,
+    // not in the planning that consumed tokens.
+    await prisma.agentConfig.update({
+      where: { orgId: opts.orgId },
+      data: { monthlyLlmSpentUsd: { increment: planResult.llm.costUsd } },
+    })
+    return result
+  }
+  // Happy path: charge after success
   await prisma.agentConfig.update({
     where: { orgId: opts.orgId },
     data: { monthlyLlmSpentUsd: { increment: planResult.llm.costUsd } },
-  })
-
-  if (planResult.decisions.length === 0) {
-    return result // LLM had nothing for us this cycle
-  }
-
-  const summary = await act({
-    orgId: opts.orgId,
-    mode: config.mode as AgentMode,
-    triggerType,
-    promptVersion: planResult.promptVersionId,
-    llm: planResult.llm,
-    proposed: planResult.decisions,
-    perceiveContextJson: JSON.stringify(snapshot),
   })
 
   result.decisionsCreated = summary.created

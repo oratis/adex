@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/modal'
 import { Badge } from '@/components/ui/badge'
 import { Tabs } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 interface Creative {
@@ -47,6 +48,7 @@ const emptyAttachForm: AttachForm = {
 
 export default function CreativesPage() {
   const { toast } = useToast()
+  const confirm = useConfirm()
   const [creatives, setCreatives] = useState<Creative[]>([])
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [showCreate, setShowCreate] = useState(false)
@@ -193,7 +195,15 @@ export default function CreativesPage() {
   }
 
   async function deleteCreative(id: string, name: string) {
-    if (!confirm(`Delete creative "${name}"? This cannot be undone.`)) return
+    if (
+      !(await confirm({
+        title: 'Delete creative',
+        message: `Delete creative "${name}"? This cannot be undone.`,
+        confirmLabel: 'Delete',
+        variant: 'danger',
+      }))
+    )
+      return
     try {
       const res = await fetch(api(`/api/creatives/${id}`), { method: 'DELETE' })
       if (!res.ok) throw new Error((await res.json()).error || 'Delete failed')

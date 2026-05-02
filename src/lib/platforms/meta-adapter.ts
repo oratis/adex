@@ -306,11 +306,9 @@ export class MetaAdsAdapter extends BaseAdapter {
     })
   }
 
-  // tiny helper — accessor pulled from internals to avoid duplication
+  // Audit High #10 — uses MetaAdsClient.accessToken public getter
+  // instead of the prior `as unknown` private-config cast. Refactor-safe.
   private tokenForUrl(): string {
-    // Pull the token off the underlying client. The MetaAdsClient stores
-    // accessToken in its private config; we reach in via cast to keep this
-    // adapter from re-storing it. (Same trust boundary as the client itself.)
-    return (this.client as unknown as { config: { accessToken: string } }).config.accessToken
+    return this.client.accessToken
   }
 }

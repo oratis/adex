@@ -29,6 +29,8 @@ export const adjustBidTool: ToolDefinition<Input> = {
     required: ['campaignId', 'newBidUsd'],
   },
   reversible: true,
+  requiresPriorState: true, // needs previousBidUsd for clean rollback
+  dependsOnPriorSuccess: true,
   riskLevel: 'high',
   validate(input) {
     const out: Input = {

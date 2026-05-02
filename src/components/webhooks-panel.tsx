@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 type Webhook = {
@@ -35,6 +36,7 @@ const EVENTS = [
 
 export function WebhooksPanel() {
   const { toast } = useToast()
+  const confirm = useConfirm()
   const [hooks, setHooks] = useState<Webhook[]>([])
   const [loading, setLoading] = useState(true)
   const [url, setUrl] = useState('')
@@ -111,7 +113,7 @@ export function WebhooksPanel() {
   }
 
   async function remove(id: string) {
-    if (!confirm('Delete this webhook?')) return
+    if (!(await confirm({ message: 'Delete this webhook?', confirmLabel: 'Delete', variant: 'danger' }))) return
     try {
       const res = await fetch(api(`/api/orgs/webhooks/${id}`), { method: 'DELETE' })
       if (!res.ok) throw new Error()

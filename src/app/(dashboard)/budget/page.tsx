@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/select'
 import { Modal } from '@/components/ui/modal'
 import { StatCard } from '@/components/layout/stat-card'
 import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { formatCurrency, api } from '@/lib/utils'
 
 interface Budget {
@@ -46,6 +47,7 @@ const CURRENCIES = ['USD', 'EUR', 'GBP', 'CNY', 'JPY', 'AUD', 'CAD', 'HKD', 'SGD
 
 export default function BudgetPage() {
   const { toast } = useToast()
+  const confirm = useConfirm()
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [showCreate, setShowCreate] = useState(false)
@@ -135,7 +137,14 @@ export default function BudgetPage() {
   }
 
   async function deleteBudget(id: string) {
-    if (!confirm('Delete this budget?')) return
+    if (
+      !(await confirm({
+        message: 'Delete this budget?',
+        confirmLabel: 'Delete',
+        variant: 'danger',
+      }))
+    )
+      return
     try {
       const res = await fetch(api(`/api/budgets/${id}`), { method: 'DELETE' })
       if (!res.ok) throw new Error()

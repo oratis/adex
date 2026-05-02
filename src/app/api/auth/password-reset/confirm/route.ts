@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { hashPassword } from '@/lib/auth'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { apiError } from '@/lib/api-error'
 
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex')
@@ -79,7 +80,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Reset failed'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return apiError(err, {
+      route: 'POST /api/auth/password-reset/confirm',
+      status: 500,
+      userMessage: 'Password reset failed — please try again',
+    })
   }
 }

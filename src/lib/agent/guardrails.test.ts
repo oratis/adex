@@ -137,6 +137,33 @@ describe('evaluateGuardrails — built-in defaults', () => {
   })
 })
 
+describe('evaluator error handling — fail-closed (audit High #9)', () => {
+  it('blocks when llm_budget_cap evaluator throws (fail-closed rule)', async () => {
+    // Make agentConfig.findUnique throw — that's what llm_budget_cap reads.
+    mockedPrisma.agentConfig.findUnique.mockRejectedValueOnce(new Error('db down'))
+    const results = await evaluateGuardrails({
+      orgId: 'o1',
+      step: { tool: 'noop', input: {} },
+      tool: tool('noop', 'low'),
+    })
+    const r = results.find((r) => r.rule === 'llm_budget_cap')
+    expect(r?.pass).toBe(false)
+    expect(r?.reason).toContain('fail-closed')
+  })
+
+  it('blocks when managed_only evaluator throws (fail-closed rule)', async () => {
+    mockedPrisma.campaign.findFirst.mockRejectedValueOnce(new Error('db down'))
+    const results = await evaluateGuardrails({
+      orgId: 'o1',
+      step: { tool: 'pause_campaign', input: { campaignId: 'c1' } },
+      tool: tool('pause_campaign', 'low'),
+    })
+    const r = results.find((r) => r.rule === 'managed_only')
+    expect(r?.pass).toBe(false)
+    expect(r?.reason).toContain('fail-closed')
+  })
+})
+
 describe('isBlocked', () => {
   it('returns true if any result fails', () => {
     expect(

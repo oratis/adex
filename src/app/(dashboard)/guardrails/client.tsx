@@ -8,6 +8,7 @@ import { api } from '@/lib/utils'
 import { GUARDRAIL_SCHEMAS, getSchema, type GuardrailSchema } from '@/lib/agent/guardrail-schemas'
 import { localHourToUtc, utcHourToLocal } from '@/lib/time'
 import { EmptyState } from '@/components/ui/empty-state'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 
 type Guardrail = {
   id: string
@@ -28,6 +29,7 @@ export function GuardrailsClient({
   initial: Guardrail[]
   userTimezone?: string
 }) {
+  const confirm = useConfirm()
   const [rows, setRows] = useState(initial)
   const [showNew, setShowNew] = useState(false)
   const [draftRule, setDraftRule] = useState<string>(GUARDRAIL_SCHEMAS[0].rule)
@@ -119,7 +121,14 @@ export function GuardrailsClient({
   }
 
   async function remove(g: Guardrail) {
-    if (!confirm('Delete this guardrail?')) return
+    if (
+      !(await confirm({
+        message: 'Delete this guardrail?',
+        confirmLabel: 'Delete',
+        variant: 'danger',
+      }))
+    )
+      return
     const res = await fetch(api(`/api/agent/guardrails/${g.id}`), { method: 'DELETE' })
     const data = await res.json()
     if (data.error) alert(data.error)

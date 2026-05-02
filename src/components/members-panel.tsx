@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 interface Member {
@@ -28,6 +29,7 @@ interface Invite {
 
 export function MembersPanel() {
   const { toast } = useToast()
+  const confirm = useConfirm()
   const [members, setMembers] = useState<Member[]>([])
   const [invites, setInvites] = useState<Invite[]>([])
   const [loading, setLoading] = useState(true)
@@ -102,7 +104,7 @@ export function MembersPanel() {
   }
 
   async function revokeInvite(id: string) {
-    if (!confirm('Revoke this invite?')) return
+    if (!(await confirm({ message: 'Revoke this invite?', confirmLabel: 'Revoke', variant: 'danger' }))) return
     try {
       const res = await fetch(api(`/api/orgs/invites/${id}`), { method: 'DELETE' })
       if (!res.ok) throw new Error()
@@ -134,7 +136,15 @@ export function MembersPanel() {
   }
 
   async function removeMember(memberId: string, name: string) {
-    if (!confirm(`Remove ${name} from the workspace?`)) return
+    if (
+      !(await confirm({
+        title: 'Remove member',
+        message: `Remove ${name} from the workspace?`,
+        confirmLabel: 'Remove',
+        variant: 'danger',
+      }))
+    )
+      return
     try {
       const res = await fetch(api(`/api/orgs/members/${memberId}`), { method: 'DELETE' })
       const data = await res.json()

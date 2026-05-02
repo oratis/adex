@@ -2,12 +2,22 @@
 
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 export function RollbackButton({ id }: { id: string }) {
+  const confirm = useConfirm()
   const [busy, setBusy] = useState(false)
   async function rollback() {
-    if (!confirm('Roll back every reversible step in this decision?')) return
+    if (
+      !(await confirm({
+        title: 'Roll back decision',
+        message: 'Roll back every reversible step in this decision?',
+        confirmLabel: 'Roll back',
+        variant: 'danger',
+      }))
+    )
+      return
     setBusy(true)
     try {
       const res = await fetch(api(`/api/agent/decisions/${id}/rollback`), { method: 'POST' })

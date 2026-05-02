@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, hashPassword, verifyPassword } from '@/lib/auth'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { apiError } from '@/lib/api-error'
 
 export async function POST(req: NextRequest) {
   let user
@@ -62,7 +63,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Password change failed'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return apiError(err, {
+      route: 'POST /api/auth/change-password',
+      status: 500,
+      userMessage: 'Password change failed — please try again',
+    })
   }
 }

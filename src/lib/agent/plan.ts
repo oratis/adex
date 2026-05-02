@@ -33,27 +33,60 @@ function priceUsd(opts: {
   )
 }
 
-function validateProposed(raw: unknown): ProposedDecision[] {
-  if (!raw || typeof raw !== 'object') return []
+type ValidationDrop = { kind: string; detail: string }
+
+function validateProposed(raw: unknown): { decisions: ProposedDecision[]; drops: ValidationDrop[] } {
+  const drops: ValidationDrop[] = []
+  if (!raw || typeof raw !== 'object') {
+    drops.push({ kind: 'root', detail: 'response is not an object' })
+    return { decisions: [], drops }
+  }
   const decisions = (raw as { decisions?: unknown }).decisions
-  if (!Array.isArray(decisions)) return []
+  if (!Array.isArray(decisions)) {
+    drops.push({ kind: 'root', detail: 'decisions is not an array' })
+    return { decisions: [], drops }
+  }
   const out: ProposedDecision[] = []
   for (const d of decisions) {
-    if (!d || typeof d !== 'object') continue
+    if (!d || typeof d !== 'object') {
+      drops.push({ kind: 'decision', detail: 'not an object' })
+      continue
+    }
     const rationale = String((d as Record<string, unknown>).rationale || '').trim()
     const severity = String((d as Record<string, unknown>).severity || 'info') as Severity
     const steps = (d as Record<string, unknown>).steps
-    if (!rationale || !VALID_SEVERITIES.includes(severity) || !Array.isArray(steps)) continue
+    if (!rationale) {
+      drops.push({ kind: 'decision', detail: 'missing rationale' })
+      continue
+    }
+    if (!VALID_SEVERITIES.includes(severity)) {
+      drops.push({ kind: 'decision', detail: `invalid severity: ${severity}` })
+      continue
+    }
+    if (!Array.isArray(steps)) {
+      drops.push({ kind: 'decision', detail: 'steps not an array' })
+      continue
+    }
     const validSteps: ProposedDecision['steps'] = []
     for (const s of steps) {
-      if (!s || typeof s !== 'object') continue
+      if (!s || typeof s !== 'object') {
+        drops.push({ kind: 'step', detail: 'not an object' })
+        continue
+      }
       const toolName = String((s as Record<string, unknown>).tool || '')
       const tool = getTool(toolName)
-      if (!tool) continue
+      if (!tool) {
+        drops.push({ kind: 'step', detail: `unknown tool: ${toolName}` })
+        continue
+      }
       const input = (s as Record<string, unknown>).input
       try {
         tool.validate(input)
-      } catch {
+      } catch (err) {
+        drops.push({
+          kind: 'step',
+          detail: `${toolName} validate threw: ${err instanceof Error ? err.message : String(err)}`,
+        })
         continue
       }
       const reason = String((s as Record<string, unknown>).reason || '').trim() || undefined
@@ -63,10 +96,13 @@ function validateProposed(raw: unknown): ProposedDecision[] {
         reason,
       })
     }
-    if (validSteps.length === 0) continue
+    if (validSteps.length === 0) {
+      drops.push({ kind: 'decision', detail: 'all steps invalid' })
+      continue
+    }
     out.push({ rationale, severity, steps: validSteps })
   }
-  return out
+  return { decisions: out, drops }
 }
 
 export type PlanResultWithMeta = PlanResult & {
@@ -84,9 +120,18 @@ export type PlanResultWithMeta = PlanResult & {
 function splitPromptForCaching(template: string): { stable: string; volatileMarker: string } {
   // Convention: the v1 template ends its stable section right before the
   // "## Recent decisions" header. We split on that marker.
+  // Audit Med #26: warn loudly if the marker isn't present — it means
+  // someone edited the template and broke the cache split, which silently
+  // doubles input-token cost.
   const splitMarker = '## Recent decisions'
   const idx = template.indexOf(splitMarker)
-  if (idx < 0) return { stable: template, volatileMarker: '' }
+  if (idx < 0) {
+    console.warn(
+      '[plan] splitPromptForCaching: marker "%s" not found in template — prompt cache disabled. Update the template to include the marker, or update splitPromptForCaching to match.',
+      splitMarker
+    )
+    return { stable: template, volatileMarker: '' }
+  }
   return {
     stable: template.slice(0, idx),
     volatileMarker: template.slice(idx),
@@ -176,7 +221,13 @@ export async function plan(
     maxTokens: 2048,
     temperature: 0.3,
   })
-  const decisions = validateProposed(result.parsed)
+  const { decisions, drops } = validateProposed(result.parsed)
+  if (drops.length > 0) {
+    console.warn(
+      `[plan] dropped ${drops.length} invalid items from LLM response:`,
+      drops.slice(0, 5)
+    )
+  }
 
   const costUsd = priceUsd({
     input: result.inputTokens,
@@ -213,6 +264,7 @@ export async function plan(
 
   return {
     decisions,
+    drops: drops.length > 0 ? drops : undefined,
     llm: {
       model: result.model,
       inputTokens: result.inputTokens + result.cacheCreateTokens + result.cacheReadTokens,

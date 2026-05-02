@@ -8,7 +8,7 @@ import { prisma } from '@/lib/prisma'
  * "Before" baseline uses the campaign-level Report rows. If there's no
  * campaign-level data (e.g. drafts), we fall back to org-level.
  */
-export type Classification = 'success' | 'neutral' | 'regression' | 'false_positive'
+export type Classification = 'success' | 'neutral' | 'regression' | 'false_positive' | 'inconclusive'
 
 type MetricSummary = {
   spend: number
@@ -124,17 +124,37 @@ export async function verify(opts: { orgId?: string; windowHours?: number } = {}
     const before = new Date(decision.executedAt.getTime() - windowHours * 60 * 60 * 1000)
     const after = new Date(decision.executedAt.getTime() + windowHours * 60 * 60 * 1000)
 
-    // Pick the first step that touched a known link.
-    const linked = decision.steps.find((s) => s.platformLinkId)
-    const beforeMetrics = linked
-      ? await metricsForCampaign(linked.platformLinkId!, before, decision.executedAt)
+    // Pick the first step that touched a known link. Audit High #11 — also
+    // verify the link still exists (it could have been deleted via campaign
+    // delete cascading via local Campaign onDelete: Cascade); without this
+    // check the metrics queries silently return 0 and we'd misclassify
+    // outcomes as success/regression based on baseline-of-0.
+    const linkedStep = decision.steps.find((s) => s.platformLinkId)
+    let useLink = false
+    if (linkedStep?.platformLinkId) {
+      const linkExists = await prisma.platformLink.findUnique({
+        where: { id: linkedStep.platformLinkId },
+        select: { id: true },
+      })
+      useLink = !!linkExists
+    }
+    const beforeMetrics = useLink
+      ? await metricsForCampaign(linkedStep!.platformLinkId!, before, decision.executedAt)
       : await metricsForOrg(decision.orgId, before, decision.executedAt)
-    const afterMetrics = linked
-      ? await metricsForCampaign(linked.platformLinkId!, decision.executedAt, after)
+    const afterMetrics = useLink
+      ? await metricsForCampaign(linkedStep!.platformLinkId!, decision.executedAt, after)
       : await metricsForOrg(decision.orgId, decision.executedAt, after)
 
-    const intent = intentForStep(decision.steps[0]?.toolName || 'noop')
-    const classification = classify(beforeMetrics, afterMetrics, intent)
+    // If the linked step's PlatformLink was deleted, mark as inconclusive
+    // rather than guessing from org-level data (which is too coarse for a
+    // single-campaign action).
+    let classification: Classification | 'inconclusive'
+    if (linkedStep?.platformLinkId && !useLink) {
+      classification = 'inconclusive'
+    } else {
+      const intent = intentForStep(decision.steps[0]?.toolName || 'noop')
+      classification = classify(beforeMetrics, afterMetrics, intent)
+    }
 
     await prisma.decisionOutcome.create({
       data: {

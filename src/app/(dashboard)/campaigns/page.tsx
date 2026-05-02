@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { useT } from '@/components/i18n-provider'
 import Link from 'next/link'
 import { api } from '@/lib/utils'
@@ -64,6 +65,7 @@ const emptyForm: FormState = {
 
 export default function CampaignsPage() {
   const { toast } = useToast()
+  const confirm = useConfirm()
   const { t } = useT()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [showCreate, setShowCreate] = useState(false)
@@ -82,7 +84,14 @@ export default function CampaignsPage() {
 
   async function bulkStatus(status: 'active' | 'paused' | 'archived') {
     if (selected.size === 0) return
-    if (!confirm(`Set ${selected.size} campaign(s) to ${status}?`)) return
+    if (
+      !(await confirm({
+        title: 'Bulk update',
+        message: `Set ${selected.size} campaign(s) to ${status}?`,
+        confirmLabel: 'Apply',
+      }))
+    )
+      return
     setBulkBusy(true)
     try {
       const res = await fetch(api('/api/campaigns/bulk-status'), {
@@ -222,7 +231,14 @@ export default function CampaignsPage() {
   }
 
   async function launchCampaign(id: string) {
-    if (!confirm('Launch this campaign to the ad platform?')) return
+    if (
+      !(await confirm({
+        title: 'Launch campaign',
+        message: 'Launch this campaign to the ad platform?',
+        confirmLabel: 'Launch',
+      }))
+    )
+      return
     try {
       const res = await fetch(api(`/api/campaigns/${id}/launch`), { method: 'POST' })
       const data = await res.json()
@@ -254,7 +270,15 @@ export default function CampaignsPage() {
   }
 
   async function deleteCampaign(id: string) {
-    if (!confirm('Delete this campaign? This cannot be undone.')) return
+    if (
+      !(await confirm({
+        title: 'Delete campaign',
+        message: 'Delete this campaign? This cannot be undone.',
+        confirmLabel: 'Delete',
+        variant: 'danger',
+      }))
+    )
+      return
     try {
       const res = await fetch(api(`/api/campaigns/${id}`), { method: 'DELETE' })
       if (!res.ok) throw new Error()

@@ -14,11 +14,16 @@ export class TikTokAdsClient {
     this.config = config
   }
 
-  private get headers() {
+  // Public for adapter use (audit High #10).
+  get authHeaders(): Record<string, string> {
     return {
       'Access-Token': this.config.accessToken,
       'Content-Type': 'application/json',
     }
+  }
+
+  private get headers() {
+    return this.authHeaders
   }
 
   async getCampaigns() {

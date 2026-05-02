@@ -37,7 +37,12 @@ async function processOne(
 ): Promise<DecisionRecord> {
   // Eagerly compute guardrails so we can decide on requiresApproval even in
   // approval_only / autonomous modes.
-  const stepEvaluations = []
+  type StepEval = {
+    step: ProposedDecision['steps'][number]
+    results: Array<{ pass: boolean; rule: string; reason?: string }>
+    blocked: boolean
+  }
+  const stepEvaluations: StepEval[] = []
   for (const step of proposed.steps) {
     const tool = getTool(step.tool)
     if (!tool) {
@@ -54,40 +59,43 @@ async function processOne(
   const anyBlocked = stepEvaluations.some((e) => e.blocked)
   const requiresApproval = mode === 'approval_only' || (mode === 'autonomous' && anyBlocked)
 
-  const decision = await prisma.decision.create({
-    data: {
-      orgId,
-      triggerType,
-      perceiveContext: '', // populated by caller via runAgentLoop
-      promptVersion,
-      llmInputTokens: llm.inputTokens,
-      llmOutputTokens: llm.outputTokens,
-      llmCostUsd: llm.costUsd,
-      llmRequestId: llm.requestId || null,
-      rationale: proposed.rationale,
-      severity: proposed.severity,
-      mode,
-      status: mode === 'shadow' ? 'skipped' : requiresApproval ? 'pending' : 'executing',
-      requiresApproval,
-    },
-  })
-
-  // Persist all steps
-  for (let i = 0; i < proposed.steps.length; i++) {
-    const evaluation = stepEvaluations[i]
-    const step = evaluation.step
-    await prisma.decisionStep.create({
+  // Audit Med #29: persist Decision + all DecisionSteps in a single
+  // transaction. Previously this was 1 + N statements with no atomicity —
+  // a crash midway would leave a Decision row with a partial step set, and
+  // the agent would see those orphans on the next tick.
+  const decision = await prisma.$transaction(async (tx) => {
+    const d = await tx.decision.create({
       data: {
-        decisionId: decision.id,
+        orgId,
+        triggerType,
+        perceiveContext: '', // populated by caller via runAgentLoop
+        promptVersion,
+        llmInputTokens: llm.inputTokens,
+        llmOutputTokens: llm.outputTokens,
+        llmCostUsd: llm.costUsd,
+        llmRequestId: llm.requestId || null,
+        rationale: proposed.rationale,
+        severity: proposed.severity,
+        mode,
+        status: mode === 'shadow' ? 'skipped' : requiresApproval ? 'pending' : 'executing',
+        requiresApproval,
+      },
+    })
+
+    await tx.decisionStep.createMany({
+      data: proposed.steps.map((step, i) => ({
+        decisionId: d.id,
         stepIndex: i,
         toolName: step.tool,
         toolInput: JSON.stringify(step.input),
-        status: mode === 'shadow' ? 'skipped' : requiresApproval ? 'pending' : 'pending',
-        guardrailReport: JSON.stringify(evaluation.results),
+        status: mode === 'shadow' ? 'skipped' : 'pending',
+        guardrailReport: JSON.stringify(stepEvaluations[i].results),
         reversible: getTool(step.tool)?.reversible ?? false,
-      },
+      })),
     })
-  }
+
+    return d
+  })
 
   fireWebhook({
     orgId,
@@ -157,6 +165,23 @@ export async function executeApprovedDecision(
         data: { status: 'failed', toolOutput: JSON.stringify({ error: 'unknown tool' }) },
       })
       anyFailed = true
+      continue
+    }
+
+    // Audit High #12 — short-circuit downstream steps that depend on prior
+    // success once any step in this decision has failed. Tools without
+    // `dependsOnPriorSuccess: true` still execute (they're independent).
+    if (anyFailed && tool.dependsOnPriorSuccess) {
+      await prisma.decisionStep.update({
+        where: { id: step.id },
+        data: {
+          status: 'skipped',
+          toolOutput: JSON.stringify({
+            skipped: true,
+            reason: 'dependsOnPriorSuccess and an earlier step in this decision failed',
+          }),
+        },
+      })
       continue
     }
 

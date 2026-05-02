@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 type Code = {
@@ -34,6 +35,7 @@ export function InvitesClient({
   codes: Code[]
   filterStatus: string
 }) {
+  const confirm = useConfirm()
   const [codes, setCodes] = useState(initial)
   const [busy, setBusy] = useState<string | null>(null)
   const [showNew, setShowNew] = useState(false)
@@ -75,7 +77,15 @@ export function InvitesClient({
   }
 
   async function revoke(id: string) {
-    if (!confirm('Revoke this invite code? Anyone holding it can no longer register.')) return
+    if (
+      !(await confirm({
+        title: 'Revoke invite code',
+        message: 'Revoke this invite code? Anyone holding it can no longer register.',
+        confirmLabel: 'Revoke',
+        variant: 'danger',
+      }))
+    )
+      return
     setBusy(id)
     try {
       const res = await fetch(api(`/api/admin/invite-codes/${id}`), { method: 'DELETE' })
@@ -104,7 +114,7 @@ export function InvitesClient({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Invite codes</h1>
           <p className="text-sm text-gray-600 mt-1">
@@ -124,7 +134,7 @@ export function InvitesClient({
             <CardTitle>Generate invite codes</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <label className="block">
                 Count
                 <Input
@@ -146,7 +156,7 @@ export function InvitesClient({
                   className="mt-1"
                 />
               </label>
-              <label className="block col-span-3">
+              <label className="block sm:col-span-3">
                 Batch label · 批次名称 (optional, e.g. &quot;spring-2026 partner pilot&quot;)
                 <Input
                   value={draft.batchLabel}
@@ -157,7 +167,7 @@ export function InvitesClient({
                   All codes generated in this submission share this label, so you can group + filter later.
                 </span>
               </label>
-              <label className="block col-span-3">
+              <label className="block sm:col-span-3">
                 Note (optional, per-code memo)
                 <Input
                   value={draft.note}
@@ -173,7 +183,7 @@ export function InvitesClient({
         </Card>
       )}
 
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="text-gray-600">Filter:</span>
         {['all', 'unused', 'used', 'expired', 'revoked'].map((s) => (
           <Button
@@ -195,11 +205,13 @@ export function InvitesClient({
           const s = statusOf(c)
           return (
             <Card key={c.id}>
-              <CardContent className="p-3 flex items-center gap-3">
-                <code className="font-mono text-sm bg-gray-100 px-2 py-1 rounded">{c.code}</code>
-                <Badge className={s.cls}>{s.label}</Badge>
-                {c.note && <span className="text-xs text-gray-600 italic">{c.note}</span>}
-                <div className="text-xs text-gray-500 ml-auto flex flex-col items-end">
+              <CardContent className="p-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <code className="font-mono text-sm bg-gray-100 px-2 py-1 rounded">{c.code}</code>
+                  <Badge className={s.cls}>{s.label}</Badge>
+                  {c.note && <span className="text-xs text-gray-600 italic">{c.note}</span>}
+                </div>
+                <div className="text-xs text-gray-500 sm:ml-auto flex flex-col sm:items-end">
                   <span>created {new Date(c.createdAt).toLocaleDateString()} by {c.createdBy}</span>
                   {c.expiresAt && (
                     <span>expires {new Date(c.expiresAt).toLocaleDateString()}</span>
@@ -209,7 +221,7 @@ export function InvitesClient({
                   )}
                 </div>
                 {!c.revokedAt && !c.usedAt && (
-                  <>
+                  <div className="flex gap-2 sm:flex-none">
                     <Button size="sm" variant="ghost" onClick={() => copyShareLink(c)}>
                       Copy link
                     </Button>
@@ -221,7 +233,7 @@ export function InvitesClient({
                     >
                       Revoke
                     </Button>
-                  </>
+                  </div>
                 )}
               </CardContent>
             </Card>

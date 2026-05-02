@@ -60,9 +60,14 @@ export async function verifyCronAuth(
     // table may not exist (pre-migration) → fall through to legacy
   }
 
-  // 2. Legacy single env-var fallback
+  // 2. Legacy single env-var fallback — also constant-time compare to
+  //    avoid the timing leak the audit flagged.
   const envSecret = process.env.CRON_SECRET
-  if (envSecret && provided === envSecret) return true
+  if (envSecret) {
+    const a = Buffer.from(provided)
+    const b = Buffer.from(envSecret)
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) return true
+  }
 
   return false
 }

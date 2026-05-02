@@ -29,6 +29,8 @@ export const adjustTargetingGeoTool: ToolDefinition<Input> = {
     required: ['campaignId'],
   },
   reversible: true,
+  requiresPriorState: true, // needs previousCountries for clean rollback
+  dependsOnPriorSuccess: true,
   riskLevel: 'high',
   validate(input) {
     const obj = (input || {}) as Record<string, unknown>

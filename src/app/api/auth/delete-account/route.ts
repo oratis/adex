@@ -6,6 +6,7 @@ import {
   SESSION_COOKIE,
 } from '@/lib/auth'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { apiError } from '@/lib/api-error'
 
 // DELETE /api/auth/delete-account
 // Body: { password: string, confirm: string }  where confirm === "DELETE"
@@ -67,7 +68,10 @@ export async function DELETE(req: NextRequest) {
     response.cookies.delete(SESSION_COOKIE)
     return response
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Account deletion failed'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return apiError(err, {
+      route: 'DELETE /api/auth/delete-account',
+      status: 500,
+      userMessage: 'Account deletion failed — please contact support',
+    })
   }
 }

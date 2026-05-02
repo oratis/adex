@@ -40,6 +40,8 @@ export const adjustTargetingDemoTool: ToolDefinition<Input> = {
     required: ['campaignId'],
   },
   reversible: true,
+  requiresPriorState: true, // needs previous bag for clean rollback
+  dependsOnPriorSuccess: true,
   riskLevel: 'high',
   validate(input) {
     const obj = (input || {}) as Record<string, unknown>

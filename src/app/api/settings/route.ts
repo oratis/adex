@@ -11,6 +11,11 @@ export async function PUT(req: NextRequest) {
     if (typeof data.name === 'string') patch.name = data.name
     if (data.dailyReportEmail !== undefined) patch.dailyReportEmail = data.dailyReportEmail
     if (typeof data.timezone === 'string' && data.timezone.length > 0) patch.timezone = data.timezone
+    if (data.slackUserId !== undefined) {
+      // Empty string → null (unbind). Strip whitespace; basic format check.
+      const v = typeof data.slackUserId === 'string' ? data.slackUserId.trim() : ''
+      patch.slackUserId = v.length > 0 ? v : null
+    }
 
     const updated = await prisma.user.update({
       where: { id: user.id },
@@ -23,6 +28,7 @@ export async function PUT(req: NextRequest) {
       email: updated.email,
       dailyReportEmail: updated.dailyReportEmail,
       timezone: updated.timezone,
+      slackUserId: updated.slackUserId,
     })
   } catch {
     return NextResponse.json({ error: 'Failed to update settings' }, { status: 500 })

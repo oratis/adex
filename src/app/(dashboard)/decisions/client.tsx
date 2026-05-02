@@ -4,9 +4,12 @@ import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { SeverityBadge } from '@/components/ui/severity-badge'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { api } from '@/lib/utils'
 import { EmptyState } from '@/components/ui/empty-state'
 import { HelpLink } from '@/components/ui/help-link'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 
 type AgentConfig = {
   enabled: boolean
@@ -46,23 +49,6 @@ type Decision = {
   steps: Step[]
 }
 
-const SEVERITY_COLORS: Record<string, string> = {
-  info: 'bg-gray-100 text-gray-700',
-  opportunity: 'bg-emerald-100 text-emerald-700',
-  warning: 'bg-amber-100 text-amber-700',
-  alert: 'bg-rose-100 text-rose-700',
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700',
-  executed: 'bg-emerald-100 text-emerald-700',
-  failed: 'bg-rose-100 text-rose-700',
-  skipped: 'bg-gray-100 text-gray-600',
-  rejected: 'bg-gray-200 text-gray-700',
-  rolled_back: 'bg-purple-100 text-purple-700',
-  executing: 'bg-blue-100 text-blue-700',
-}
-
 export function DecisionsClient({
   role,
   config: initialConfig,
@@ -80,6 +66,7 @@ export function DecisionsClient({
     until: string | null
   }
 }) {
+  const confirm = useConfirm()
   const [config, setConfig] = useState(initialConfig)
   const [running, setRunning] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
@@ -144,7 +131,15 @@ export function DecisionsClient({
   }
 
   async function rollback(id: string) {
-    if (!confirm('Roll back every reversible step in this decision?')) return
+    if (
+      !(await confirm({
+        title: 'Roll back decision',
+        message: 'Roll back every reversible step in this decision?',
+        confirmLabel: 'Roll back',
+        variant: 'danger',
+      }))
+    )
+      return
     const res = await fetch(api(`/api/agent/decisions/${id}/rollback`), { method: 'POST' })
     const data = await res.json()
     if (data.error) alert(data.error)
@@ -294,7 +289,15 @@ export function DecisionsClient({
                 alert('None of the selected decisions are reversible (need executed status + reversible step).')
                 return
               }
-              if (!confirm(`Roll back ${reversibleIds.length} decision(s)?`)) return
+              if (
+                !(await confirm({
+                  title: 'Roll back decisions',
+                  message: `Roll back ${reversibleIds.length} decision(s)?`,
+                  confirmLabel: 'Roll back',
+                  variant: 'danger',
+                }))
+              )
+                return
               const res = await fetch(api('/api/agent/decisions/bulk-rollback'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -350,8 +353,8 @@ export function DecisionsClient({
                 )}
                 <div className="flex-1">
                   <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <Badge className={SEVERITY_COLORS[d.severity] || ''}>{d.severity}</Badge>
-                    <Badge className={STATUS_COLORS[d.status] || ''}>{d.status}</Badge>
+                    <SeverityBadge severity={d.severity} />
+                    <StatusBadge status={d.status} />
                     <Badge className="bg-gray-100 text-gray-700">{d.mode}</Badge>
                     {d.outcomeClass && (
                       <Badge
@@ -396,7 +399,7 @@ export function DecisionsClient({
                         >
                           <div className="flex items-center gap-2">
                             <Badge>{s.toolName}</Badge>
-                            <Badge className={STATUS_COLORS[s.status] || ''}>{s.status}</Badge>
+                            <StatusBadge status={s.status} />
                             {s.reversible && (
                               <Badge className="bg-blue-50 text-blue-700">reversible</Badge>
                             )}

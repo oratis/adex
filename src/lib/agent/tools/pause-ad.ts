@@ -53,4 +53,9 @@ export const pauseAdTool: ToolDefinition<Input> = {
     await prisma.ad.update({ where: { id: ad.id }, data: { status: 'paused' } })
     return { ok: true, output: { adId: ad.id, newStatus: 'paused' } }
   },
+  // Audit High #14 — no clean inverse exists (no `resume_ad` tool). Return
+  // null so rollback runner records this step as skipped.
+  inverse() {
+    return null
+  },
 }

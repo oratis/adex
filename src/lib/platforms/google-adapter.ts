@@ -129,11 +129,7 @@ export class GoogleAdsAdapter extends BaseAdapter {
       )
     }
     await safeCall(this.platform, async () => {
-      const headers: Record<string, string> = (
-        this.client as unknown as { getHeaders: () => Record<string, string> }
-      ).getHeaders
-        ? (this.client as unknown as { getHeaders: () => Record<string, string> }).getHeaders()
-        : {}
+      const headers = this.client.getAuthHeaders()
       const res = await fetch(
         `https://googleads.googleapis.com/v23/customers/${cid}/campaignBudgets:mutate`,
         {

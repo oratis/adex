@@ -269,7 +269,8 @@ export class TikTokAdsAdapter extends BaseAdapter {
     })
   }
 
+  // Audit High #10 — uses public TikTokAdsClient.authHeaders getter.
   private headers(): Record<string, string> {
-    return (this.client as unknown as { headers: Record<string, string> }).headers
+    return this.client.authHeaders
   }
 }

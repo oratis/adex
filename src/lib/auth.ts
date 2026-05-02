@@ -236,13 +236,24 @@ export async function requireAuth() {
  * always a platform admin. Use it sparingly (1–2 emails); promote everyone
  * else through the UI which writes to the column.
  */
+/**
+ * Audit Med #24: cache the parsed PLATFORM_ADMIN_EMAILS Set on first read.
+ * Previously every isPlatformAdmin() call re-split the env var on every
+ * request — cheap individually but adds up across the dashboard layout
+ * fanout (Sidebar + each protected route).
+ */
+let _adminEmailSet: Set<string> | null = null
+function adminEmailSet(): Set<string> {
+  if (_adminEmailSet) return _adminEmailSet
+  const env = (process.env.PLATFORM_ADMIN_EMAILS || '').toLowerCase()
+  _adminEmailSet = new Set(env.split(',').map((s) => s.trim()).filter(Boolean))
+  return _adminEmailSet
+}
+
 export function isPlatformAdmin(user: { email: string; isPlatformAdmin?: boolean | null } | null): boolean {
   if (!user) return false
   if (user.isPlatformAdmin) return true
-  const env = (process.env.PLATFORM_ADMIN_EMAILS || '').toLowerCase()
-  if (!env) return false
-  const allow = env.split(',').map((s) => s.trim()).filter(Boolean)
-  return allow.includes(user.email.toLowerCase())
+  return adminEmailSet().has(user.email.toLowerCase())
 }
 
 /**

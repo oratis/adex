@@ -15,6 +15,13 @@ export class MetaAdsClient {
     this.config = config
   }
 
+  // Public access token accessor — used by MetaAdsAdapter for ad-hoc REST
+  // calls (budget update, pause ad, asset upload) without the unsafe
+  // `as unknown` private-access pattern. Audit High #10.
+  get accessToken(): string {
+    return this.config.accessToken
+  }
+
   private get headers() {
     return { 'Authorization': `Bearer ${this.config.accessToken}` }
   }

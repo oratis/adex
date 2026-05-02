@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { api } from '@/lib/utils'
 
 type Secret = {
@@ -22,6 +23,7 @@ type ListResponse = {
 }
 
 export function CronSecretsClient() {
+  const confirm = useConfirm()
   const [data, setData] = useState<ListResponse | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<{ cronPath: string; token: string } | null>(null)
@@ -37,9 +39,12 @@ export function CronSecretsClient() {
 
   async function rotate(cronPath: string) {
     if (
-      !confirm(
-        `Rotate the secret for /api/cron/${cronPath}?\n\nAny scheduler still using the old token will start failing on the next call. Make sure you copy + paste the new token into Cloud Scheduler before that.`
-      )
+      !(await confirm({
+        title: 'Rotate cron secret',
+        message: `Rotate the secret for /api/cron/${cronPath}?\n\nAny scheduler still using the old token will start failing on the next call. Make sure you copy + paste the new token into Cloud Scheduler before that.`,
+        confirmLabel: 'Rotate',
+        variant: 'danger',
+      }))
     )
       return
     setBusy(cronPath)
@@ -62,7 +67,15 @@ export function CronSecretsClient() {
   }
 
   async function revoke(s: Secret) {
-    if (!confirm(`Revoke the secret for /api/cron/${s.cronPath}? Scheduler calls fail until rotated.`)) return
+    if (
+      !(await confirm({
+        title: 'Revoke cron secret',
+        message: `Revoke the secret for /api/cron/${s.cronPath}? Scheduler calls fail until rotated.`,
+        confirmLabel: 'Revoke',
+        variant: 'danger',
+      }))
+    )
+      return
     setBusy(s.id)
     try {
       const r = await fetch(api(`/api/admin/cron-secrets/${s.id}`), { method: 'DELETE' })

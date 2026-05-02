@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Tabs } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { MembersPanel } from '@/components/members-panel'
 import { AuditPanel } from '@/components/audit-panel'
 import { SessionsPanel } from '@/components/sessions-panel'
@@ -121,6 +122,7 @@ const PLATFORMS: PlatformConfig[] = [
 
 export default function SettingsPage() {
   const { toast } = useToast()
+  const confirm = useConfirm()
   const router = useRouter()
   const [auths, setAuths] = useState<PlatformAuth[]>([])
   // Account management
@@ -213,7 +215,15 @@ export default function SettingsPage() {
   }
 
   async function removePlatform(platformId: string) {
-    if (!confirm(`Remove ${platformId} authorization?`)) return
+    if (
+      !(await confirm({
+        title: 'Disconnect platform',
+        message: `Remove ${platformId} authorization?`,
+        confirmLabel: 'Disconnect',
+        variant: 'danger',
+      }))
+    )
+      return
     try {
       const res = await fetch(api('/api/platforms'), {
         method: 'DELETE',
@@ -312,7 +322,15 @@ export default function SettingsPage() {
       toast({ variant: 'error', title: 'Type DELETE to confirm' })
       return
     }
-    if (!confirm('This will permanently delete your account and ALL data. Continue?')) return
+    if (
+      !(await confirm({
+        title: 'Delete account permanently',
+        message: 'This will permanently delete your account and ALL data. Continue?',
+        confirmLabel: 'Delete account',
+        variant: 'danger',
+      }))
+    )
+      return
     setDeleting(true)
     try {
       const res = await fetch(api('/api/auth/delete-account'), {

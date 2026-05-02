@@ -61,24 +61,48 @@ export async function detectDrift(opts: {
     where: { orgId: opts.orgId, platform: opts.platform, status: { in: ['active', 'paused'] } },
   })
 
+  // Audit High #7: 2 batched queries (links, snapshots) replace
+  // per-campaign findFirst pairs. Per-campaign UPDATE remains because
+  // the syncError text varies; could batch further with raw SQL later.
+  const campaignIds = campaigns.map((c) => c.id)
+  const links = campaignIds.length
+    ? await prisma.platformLink.findMany({
+        where: {
+          orgId: opts.orgId,
+          entityType: 'campaign',
+          localEntityId: { in: campaignIds },
+          status: 'active',
+        },
+      })
+    : []
+  const linkByCampaignId = new Map(links.map((l) => [l.localEntityId, l]))
+  const linkIds = links.map((l) => l.id)
+
+  const snaps = linkIds.length
+    ? await prisma.campaignSnapshot.findMany({
+        where: { platformLinkId: { in: linkIds } },
+        orderBy: { capturedAt: 'desc' },
+        take: linkIds.length * 5,
+      })
+    : []
+  const latestSnap = new Map<string, (typeof snaps)[number]>()
+  for (const s of snaps) {
+    if (!latestSnap.has(s.platformLinkId)) latestSnap.set(s.platformLinkId, s)
+  }
+
   let drifted = 0
   let approvalsCreated = 0
   for (const c of campaigns) {
-    const link = await prisma.platformLink.findFirst({
-      where: { orgId: opts.orgId, entityType: 'campaign', localEntityId: c.id, status: 'active' },
-    })
+    const link = linkByCampaignId.get(c.id)
     if (!link) {
-      // local-only — set syncedStatus null, no drift to report
+      // local-only — clear synced state
       await prisma.campaign.update({
         where: { id: c.id },
         data: { syncedStatus: null, syncedAt: new Date() },
       })
       continue
     }
-    const snap = await prisma.campaignSnapshot.findFirst({
-      where: { platformLinkId: link.id },
-      orderBy: { capturedAt: 'desc' },
-    })
+    const snap = latestSnap.get(link.id)
     if (!snap) continue
     const remote = snap.status as SyncedStatus
     const drift = c.desiredStatus !== remote

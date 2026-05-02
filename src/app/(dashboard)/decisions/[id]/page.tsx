@@ -4,28 +4,13 @@ import { prisma } from '@/lib/prisma'
 import { getCurrentUser, getCurrentOrg } from '@/lib/auth'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { SeverityBadge } from '@/components/ui/severity-badge'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { RollbackButton } from './rollback-button'
 import { describeDecision, toolLabel, statusLabel } from '@/lib/humanize'
 import { formatInTimezone } from '@/lib/time'
 
 export const dynamic = 'force-dynamic'
-
-const SEVERITY_COLORS: Record<string, string> = {
-  info: 'bg-gray-100 text-gray-700',
-  opportunity: 'bg-emerald-100 text-emerald-700',
-  warning: 'bg-amber-100 text-amber-700',
-  alert: 'bg-rose-100 text-rose-700',
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700',
-  executed: 'bg-emerald-100 text-emerald-700',
-  failed: 'bg-rose-100 text-rose-700',
-  rejected: 'bg-gray-200 text-gray-700',
-  rolled_back: 'bg-purple-100 text-purple-700',
-  skipped: 'bg-gray-100 text-gray-600',
-  executing: 'bg-blue-100 text-blue-700',
-}
 
 export default async function DecisionDetailPage({
   params,
@@ -80,8 +65,8 @@ export default async function DecisionDetailPage({
       <Card>
         <CardContent className="p-4 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className={SEVERITY_COLORS[decision.severity] || ''}>{decision.severity}</Badge>
-            <Badge className={STATUS_COLORS[decision.status] || ''}>{decision.status}</Badge>
+            <SeverityBadge severity={decision.severity} />
+            <StatusBadge status={decision.status} />
             <Badge className="bg-gray-100 text-gray-700">{decision.mode}</Badge>
             <Badge className="bg-gray-100 text-gray-700">trigger: {decision.triggerType}</Badge>
             {decision.outcome && (
@@ -148,11 +133,9 @@ export default async function DecisionDetailPage({
         <CardContent className="space-y-2">
           {decision.steps.map((s) => (
             <div key={s.id} className="border rounded p-3 text-xs space-y-2">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Badge title={s.toolName}>{toolLabel(s.toolName).zh}</Badge>
-                <Badge className={STATUS_COLORS[s.status] || ''}>
-                  {statusLabel(s.status).zh}
-                </Badge>
+                <StatusBadge status={s.status} label={statusLabel(s.status).zh} />
                 {s.reversible && (
                   <Badge className="bg-blue-50 text-blue-700">reversible</Badge>
                 )}

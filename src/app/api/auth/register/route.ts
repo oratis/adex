@@ -1,17 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import {
-  hashPassword,
-  createSession,
-  SESSION_COOKIE,
-  SESSION_MAX_AGE,
-  ensurePersonalOrg,
-} from '@/lib/auth'
+import { hashPassword, createSession, SESSION_COOKIE, SESSION_MAX_AGE } from '@/lib/auth'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
-import { validateInviteCode, consumeInviteCode } from '@/lib/invite-codes'
+import { validateInviteCode } from '@/lib/invite-codes'
 import { sendMail } from '@/lib/mailer'
+import { apiError } from '@/lib/api-error'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+class InviteRaceError extends Error {}
 
 function welcomeEmailHtml(name: string): string {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://adexads.com'
@@ -84,30 +81,57 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Email already registered' }, { status: 400 })
     }
 
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: await hashPassword(password),
-        name: name.trim(),
-      },
-    })
+    // Audit High #16: create user + consume invite + personal org atomically.
+    // Previously these were 3 sequential statements with hand-rolled rollback
+    // (delete user on invite race), which leaked half-created accounts when
+    // the org create step crashed. $transaction throws on any failure and
+    // automatically rolls everything back.
+    const passwordHash = await hashPassword(password)
+    const trimmedName = name.trim()
 
-    // Consume the invite code AFTER user exists. If race lost (someone used
-    // it in parallel), roll back the user creation rather than leave an
-    // orphan account.
-    if (codeId) {
-      const consumed = await consumeInviteCode(codeId, user.id)
-      if (!consumed) {
-        await prisma.user.delete({ where: { id: user.id } })
-        return NextResponse.json(
-          { error: 'Invite code was already used by someone else — request a new one' },
-          { status: 400 }
-        )
+    let user: Awaited<ReturnType<typeof prisma.user.create>>
+    try {
+      user = await prisma.$transaction(async (tx) => {
+        const u = await tx.user.create({
+          data: { email, password: passwordHash, name: trimmedName },
+        })
+
+        if (codeId) {
+          const result = await tx.inviteCode.updateMany({
+            where: { id: codeId, usedAt: null, revokedAt: null },
+            data: { usedAt: new Date(), usedByUserId: u.id },
+          })
+          if (result.count !== 1) {
+            // Throw to roll back the user create above.
+            throw new InviteRaceError(
+              'Invite code was already used by someone else — request a new one'
+            )
+          }
+        }
+
+        // Inline personal-org creation (mirrors ensurePersonalOrg). New user,
+        // so we can skip the existing-membership check.
+        const base = (u.name || u.email.split('@')[0])
+          .replace(/[^a-zA-Z0-9]+/g, '-')
+          .toLowerCase()
+        const slug = `ws-${base.slice(0, 20)}-${u.id.slice(0, 6)}`
+        const orgName = `${u.name || u.email.split('@')[0]}'s workspace`
+        await tx.organization.create({
+          data: {
+            name: orgName,
+            slug,
+            createdBy: u.id,
+            members: { create: { userId: u.id, role: 'owner' } },
+          },
+        })
+        return u
+      })
+    } catch (err) {
+      if (err instanceof InviteRaceError) {
+        return NextResponse.json({ error: err.message }, { status: 400 })
       }
+      throw err
     }
-
-    // Every user gets a personal workspace on sign-up
-    await ensurePersonalOrg(user)
 
     // Best-effort welcome email — never block registration on SMTP issues.
     // If SMTP isn't configured, sendMail returns ok:false and we move on.
@@ -136,7 +160,10 @@ export async function POST(req: NextRequest) {
 
     return response
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Registration failed'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return apiError(error, {
+      route: 'POST /api/auth/register',
+      status: 500,
+      userMessage: 'Registration failed — please try again',
+    })
   }
 }

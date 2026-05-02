@@ -8,6 +8,7 @@ import {
   SESSION_MAX_AGE,
 } from '@/lib/auth'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { apiError } from '@/lib/api-error'
 
 export async function POST(req: NextRequest) {
   // 10 attempts / minute / IP — protects against credential stuffing
@@ -53,7 +54,10 @@ export async function POST(req: NextRequest) {
 
     return response
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Login failed'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return apiError(error, {
+      route: 'POST /api/auth/login',
+      status: 500,
+      userMessage: 'Login failed — please try again',
+    })
   }
 }
