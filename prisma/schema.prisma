@@ -112,6 +112,12 @@ model Organization {
   pendingApprovals  PendingApproval[]
   experiments       Experiment[]
   agentConfig       AgentConfig?
+
+  // Multi-account: a workspace may have several ad-platform accounts under
+  // the same connection (e.g. Google MCC with N customer IDs, TikTok with
+  // N advertisers). The PlatformAuth row still mirrors the primary account
+  // so legacy adapters/agent tools keep reading a single `accountId`.
+  platformAccounts  PlatformAccount[]
 }
 
 model Webhook {
@@ -210,6 +216,33 @@ model PlatformAuth {
 
   @@unique([orgId, platform])
   @@index([userId])
+}
+
+// One row per ad-platform account under a workspace. A Google MCC owning
+// N customer IDs creates N rows here, all sharing the org-level
+// PlatformAuth credentials. Per-account access tokens (TikTok-style) live
+// on the row when they differ from the org-level token.
+//
+// `isPrimary` marks the account that mirrors into PlatformAuth.accountId
+// so the existing single-account adapters keep working without changes.
+model PlatformAccount {
+  id           String   @id @default(cuid())
+  orgId        String
+  platform     String
+  accountId    String
+  displayName  String?
+  isPrimary    Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  accessToken  String?
+  refreshToken String?
+  extra        String?  // JSON
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, platform, accountId])
+  @@index([orgId, platform, isPrimary])
 }
 
 model Campaign {

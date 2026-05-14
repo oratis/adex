@@ -27,12 +27,28 @@ interface PlatformAuth {
   hasAccessToken?: boolean
 }
 
+interface PlatformAccount {
+  id: string
+  platform: string
+  accountId: string
+  displayName: string | null
+  isPrimary: boolean
+  isActive: boolean
+  hasAccessToken?: boolean
+  hasRefreshToken?: boolean
+}
+
 interface PlatformConfig {
   id: string
   name: string
   icon: string
   description: string
   oauthSupported?: boolean
+  // When true, the platform card shows the "Linked accounts" list so the
+  // workspace can hold N ad accounts under one connection (e.g. Google MCC
+  // → multiple customer IDs, TikTok → multiple advertisers).
+  multiAccount?: boolean
+  accountLabel?: string // singular noun for the list ("Customer ID", "Advertiser ID", ...)
   fields: Array<{ key: string; label: string; placeholder: string; sensitive?: boolean }>
 }
 
@@ -41,6 +57,7 @@ const PLATFORMS: PlatformConfig[] = [
     id: 'google', name: 'Google Ads', icon: '🔵',
     description: 'Connect your Google Ads MCC or individual account',
     oauthSupported: true,
+    multiAccount: true, accountLabel: 'Customer ID',
     fields: [
       { key: 'accountId', label: 'MCC / Customer ID', placeholder: '830-379-6268' },
       { key: 'apiKey', label: 'Developer Token', placeholder: 'Google Ads developer token', sensitive: true },
@@ -49,6 +66,7 @@ const PLATFORMS: PlatformConfig[] = [
   {
     id: 'meta', name: 'Meta (Facebook)', icon: '🟣',
     description: 'Connect Facebook/Instagram ad accounts',
+    multiAccount: true, accountLabel: 'Ad Account ID',
     fields: [
       { key: 'accountId', label: 'Ad Account ID', placeholder: 'act_xxxxxxxxx' },
       { key: 'accessToken', label: 'Access Token', placeholder: 'Facebook access token', sensitive: true },
@@ -59,6 +77,7 @@ const PLATFORMS: PlatformConfig[] = [
   {
     id: 'tiktok', name: 'TikTok Ads', icon: '⬛',
     description: 'Connect TikTok Business ad accounts',
+    multiAccount: true, accountLabel: 'Advertiser ID',
     fields: [
       { key: 'accountId', label: 'Advertiser ID', placeholder: 'TikTok Advertiser ID' },
       { key: 'accessToken', label: 'Access Token', placeholder: 'TikTok access token', sensitive: true },
@@ -69,6 +88,7 @@ const PLATFORMS: PlatformConfig[] = [
   {
     id: 'appsflyer', name: 'AppsFlyer', icon: '📱',
     description: 'Connect AppsFlyer for attribution data',
+    multiAccount: true, accountLabel: 'App ID',
     fields: [
       { key: 'apiKey', label: 'API Token', placeholder: 'AppsFlyer API token', sensitive: true },
       { key: 'appId', label: 'App ID', placeholder: 'com.example.app' },
@@ -77,6 +97,7 @@ const PLATFORMS: PlatformConfig[] = [
   {
     id: 'adjust', name: 'Adjust', icon: '📐',
     description: 'Connect Adjust for attribution data',
+    multiAccount: true, accountLabel: 'App Token',
     fields: [
       { key: 'apiKey', label: 'API Token', placeholder: 'Adjust API token', sensitive: true },
       { key: 'appId', label: 'App Token', placeholder: 'Adjust app token' },
@@ -85,6 +106,7 @@ const PLATFORMS: PlatformConfig[] = [
   {
     id: 'amazon', name: 'Amazon Ads', icon: '🟠',
     description: 'Connect Amazon Advertising (Sponsored Products, Brands, Display)',
+    multiAccount: true, accountLabel: 'Profile ID',
     fields: [
       { key: 'accountId', label: 'Profile ID', placeholder: 'Amazon Advertising profile ID' },
       { key: 'appId', label: 'LWA Client ID', placeholder: 'amzn1.application-oa2-client.xxx' },
@@ -96,6 +118,7 @@ const PLATFORMS: PlatformConfig[] = [
   {
     id: 'linkedin', name: 'LinkedIn Ads', icon: '🔷',
     description: 'Connect LinkedIn Marketing Solutions',
+    multiAccount: true, accountLabel: 'Ad Account ID',
     fields: [
       { key: 'accountId', label: 'Ad Account ID', placeholder: 'numeric id (e.g. 12345678)' },
       { key: 'accessToken', label: 'Access Token', placeholder: 'OAuth access token', sensitive: true },
@@ -125,6 +148,9 @@ export default function SettingsPage() {
   const confirm = useConfirm()
   const router = useRouter()
   const [auths, setAuths] = useState<PlatformAuth[]>([])
+  const [accounts, setAccounts] = useState<PlatformAccount[]>([])
+  const [newAccount, setNewAccount] = useState<Record<string, { accountId: string; displayName: string; accessToken: string }>>({})
+  const [accountSaving, setAccountSaving] = useState<string | null>(null)
   // Account management
   const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' })
   const [pwSaving, setPwSaving] = useState(false)
@@ -166,8 +192,83 @@ export default function SettingsPage() {
     })
   }, [])
 
+  const loadAccounts = useCallback(async () => {
+    const res = await fetch(api('/api/platforms/accounts'))
+    if (!res.ok) return
+    const data = await res.json()
+    if (Array.isArray(data)) setAccounts(data)
+  }, [])
+
+  async function addAccount(platformId: string) {
+    const entry = newAccount[platformId]
+    if (!entry?.accountId) {
+      toast({ variant: 'error', title: 'Account ID required' })
+      return
+    }
+    setAccountSaving(platformId)
+    try {
+      const res = await fetch(api('/api/platforms/accounts'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: platformId,
+          accountId: entry.accountId.trim(),
+          displayName: entry.displayName?.trim() || undefined,
+          accessToken: entry.accessToken?.trim() || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Add failed')
+      toast({ variant: 'success', title: 'Account added' })
+      setNewAccount(prev => ({ ...prev, [platformId]: { accountId: '', displayName: '', accessToken: '' } }))
+      await loadAccounts()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Add failed', description: err instanceof Error ? err.message : undefined })
+    } finally {
+      setAccountSaving(null)
+    }
+  }
+
+  async function setPrimaryAccount(platformId: string, accountId: string) {
+    try {
+      const res = await fetch(api('/api/platforms/accounts'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: platformId, accountId, isPrimary: true }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Update failed')
+      toast({ variant: 'success', title: 'Primary updated' })
+      await loadAccounts()
+      await loadAuths()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Update failed', description: err instanceof Error ? err.message : undefined })
+    }
+  }
+
+  async function removeAccount(platformId: string, accountId: string) {
+    if (!(await confirm({
+      title: 'Remove account',
+      message: `Remove ${accountId} from this workspace?`,
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    }))) return
+    try {
+      const res = await fetch(api('/api/platforms/accounts'), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: platformId, accountId }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Remove failed')
+      toast({ variant: 'success', title: 'Account removed' })
+      await loadAccounts()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Remove failed', description: err instanceof Error ? err.message : undefined })
+    }
+  }
+
   useEffect(() => {
     loadAuths()
+    loadAccounts()
     fetch(api('/api/auth/me')).then(r => r.json()).then(data => {
       if (data.name !== undefined) setProfile({ name: data.name || '', dailyReportEmail: data.dailyReportEmail || '', timezone: data.timezone || 'UTC' })
     })
@@ -177,12 +278,13 @@ export default function SettingsPage() {
     if (params.get('success') === 'google_connected') {
       window.history.replaceState({}, '', window.location.pathname)
       loadAuths()
+      loadAccounts()
     }
     if (params.get('error')) {
       setTestError(`Google OAuth error: ${params.get('error')}`)
       window.history.replaceState({}, '', window.location.pathname)
     }
-  }, [loadAuths])
+  }, [loadAuths, loadAccounts])
 
   function startGoogleOAuth() {
     window.location.href = api('/api/auth/google')
@@ -491,6 +593,79 @@ export default function SettingsPage() {
                           </div>
                         </div>
                       )}
+
+                      {/* Linked accounts list (multi-account) */}
+                      {p.multiAccount && (() => {
+                        const platformAccounts = accounts.filter(a => a.platform === p.id)
+                        const draft = newAccount[p.id] || { accountId: '', displayName: '', accessToken: '' }
+                        return (
+                          <div className="mt-5 pt-4 border-t">
+                            <div className="flex items-baseline justify-between mb-2">
+                              <p className="text-sm font-medium">Linked {p.accountLabel || 'accounts'}s</p>
+                              <p className="text-xs text-gray-500">
+                                {platformAccounts.length === 0 ? 'No accounts yet' : `${platformAccounts.length} linked`}
+                              </p>
+                            </div>
+                            {platformAccounts.length > 0 && (
+                              <div className="space-y-1.5 mb-3">
+                                {platformAccounts.map((acc) => (
+                                  <div key={acc.id} className="flex items-center gap-2 text-sm py-1.5 px-2 bg-gray-50 rounded">
+                                    <span className="font-mono text-xs">{acc.accountId}</span>
+                                    {acc.displayName && <span className="text-gray-600">— {acc.displayName}</span>}
+                                    {acc.isPrimary ? (
+                                      <Badge variant="success">Primary</Badge>
+                                    ) : (
+                                      <button
+                                        className="text-xs text-blue-600 hover:underline"
+                                        onClick={() => setPrimaryAccount(p.id, acc.accountId)}
+                                      >
+                                        Set primary
+                                      </button>
+                                    )}
+                                    <span className="flex-1" />
+                                    <button
+                                      className="text-xs text-red-600 hover:underline"
+                                      onClick={() => removeAccount(p.id, acc.accountId)}
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                              <Input
+                                placeholder={`Add ${p.accountLabel || 'account ID'}`}
+                                value={draft.accountId}
+                                onChange={e => setNewAccount(prev => ({ ...prev, [p.id]: { ...draft, accountId: e.target.value } }))}
+                              />
+                              <Input
+                                placeholder="Display name (optional)"
+                                value={draft.displayName}
+                                onChange={e => setNewAccount(prev => ({ ...prev, [p.id]: { ...draft, displayName: e.target.value } }))}
+                              />
+                              <div className="flex gap-2">
+                                <Input
+                                  type="password"
+                                  placeholder="Access token (optional)"
+                                  value={draft.accessToken}
+                                  onChange={e => setNewAccount(prev => ({ ...prev, [p.id]: { ...draft, accessToken: e.target.value } }))}
+                                />
+                                <Button
+                                  size="sm"
+                                  onClick={() => addAccount(p.id)}
+                                  disabled={accountSaving === p.id}
+                                >
+                                  {accountSaving === p.id ? 'Adding…' : 'Add'}
+                                </Button>
+                              </div>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-2">
+                              Primary {p.accountLabel || 'account'} is used by the agent and report sync. Add more to keep them linked here for future per-account routing.
+                            </p>
+                          </div>
+                        )
+                      })()}
                     </CardContent>
                   </Card>
                 )

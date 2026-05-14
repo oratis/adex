@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
       where: { orgId_platform: { orgId: org.id, platform } },
     })
 
+    let auth
     if (existing) {
       const updates: Record<string, string | boolean> = { isActive: true }
       if (data.accountId) updates.accountId = data.accountId
@@ -49,17 +50,12 @@ export async function POST(req: NextRequest) {
       if (data.accessToken) updates.accessToken = data.accessToken
       if (data.refreshToken) updates.refreshToken = data.refreshToken
 
-      const auth = await prisma.platformAuth.update({
+      auth = await prisma.platformAuth.update({
         where: { id: existing.id },
         data: updates,
       })
-
-      return NextResponse.json({
-        id: auth.id, platform: auth.platform, isActive: auth.isActive,
-        accountId: auth.accountId, apiKey: auth.apiKey, appId: auth.appId,
-      })
     } else {
-      const auth = await prisma.platformAuth.create({
+      auth = await prisma.platformAuth.create({
         data: {
           orgId: org.id,
           userId: user.id,
@@ -72,12 +68,35 @@ export async function POST(req: NextRequest) {
           refreshToken: data.refreshToken || null,
         },
       })
+    }
 
-      return NextResponse.json({
-        id: auth.id, platform: auth.platform, isActive: auth.isActive,
-        accountId: auth.accountId, apiKey: auth.apiKey, appId: auth.appId,
+    // Mirror accountId into PlatformAccount as the primary row. Demote any
+    // other primary first so there's always exactly one primary per
+    // (org, platform).
+    if (data.accountId) {
+      await prisma.$transaction(async (tx) => {
+        await tx.platformAccount.updateMany({
+          where: { orgId: org.id, platform, isPrimary: true, NOT: { accountId: data.accountId } },
+          data: { isPrimary: false },
+        })
+        await tx.platformAccount.upsert({
+          where: { orgId_platform_accountId: { orgId: org.id, platform, accountId: data.accountId } },
+          update: { isPrimary: true, isActive: true },
+          create: {
+            orgId: org.id,
+            platform,
+            accountId: data.accountId,
+            isPrimary: true,
+            isActive: true,
+          },
+        })
       })
     }
+
+    return NextResponse.json({
+      id: auth.id, platform: auth.platform, isActive: auth.isActive,
+      accountId: auth.accountId, apiKey: auth.apiKey, appId: auth.appId,
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to save authorization'
     return NextResponse.json({ error: message }, { status: 500 })
@@ -88,9 +107,10 @@ export async function DELETE(req: NextRequest) {
   try {
     const { org } = await requireAuthWithOrg()
     const { platform } = await req.json()
-    await prisma.platformAuth.deleteMany({
-      where: { orgId: org.id, platform },
-    })
+    await prisma.$transaction([
+      prisma.platformAccount.deleteMany({ where: { orgId: org.id, platform } }),
+      prisma.platformAuth.deleteMany({ where: { orgId: org.id, platform } }),
+    ])
     return NextResponse.json({ ok: true })
   } catch {
     return NextResponse.json({ error: 'Failed to delete' }, { status: 500 })
