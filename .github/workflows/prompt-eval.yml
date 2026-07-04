@@ -38,6 +38,11 @@ jobs:
           cat eval-output.json
       - name: Enforce pass-rate floor
         run: |
+          SKIPPED=$(jq -r '.skipped // false' eval-output.json)
+          if [ "$SKIPPED" = "true" ]; then
+            echo "eval skipped (ANTHROPIC_API_KEY not configured) — not gating"
+            exit 0
+          fi
           PASS=$(jq -r '.passRate' eval-output.json)
           echo "pass rate = $PASS (floor $PASS_RATE_FLOOR)"
           awk -v pass="$PASS" -v floor="$PASS_RATE_FLOOR" \
