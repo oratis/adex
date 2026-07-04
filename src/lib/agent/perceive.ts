@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import type { CampaignSummary, PerceiveSnapshot, Severity } from './types'
+import { buildGrowthSnapshot } from '@/lib/growth/agent-perceive'
 
 /**
  * Build the "facts" snapshot the LLM will plan against.
@@ -157,10 +158,14 @@ export async function perceive(orgId: string): Promise<PerceiveSnapshot> {
     (g) => `[${g.scope}${g.scopeId ? `:${g.scopeId}` : ''}] ${g.rule}=${g.config}`
   )
 
+  // P21 — growth funnel/channel/gate/budget block (null for non-growth orgs).
+  const growth = await buildGrowthSnapshot(orgId)
+
   return {
     orgId,
     takenAt: new Date().toISOString(),
     campaigns: summaries,
+    growth,
     recentDecisions: recentDecisions.map((d) => ({
       id: d.id,
       rationale: d.rationale,
