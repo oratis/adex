@@ -260,7 +260,8 @@ model Campaign {
   name            String
   platform        String   // google, meta, tiktok
   status          String   @default("draft") // draft, active, paused, completed
-  objective       String?  // awareness, consideration, conversion
+  objective       String?  // awareness, consideration, conversion, app_install, web_conversion
+  promotedAppId   String?  // → PromotedApp.id for app_install / web_conversion campaigns
   targetCountries String?  // JSON array of country codes
   targetAudience  String?  // JSON object with demographics
   targetInterests String?  // JSON array of interests
