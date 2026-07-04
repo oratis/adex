@@ -118,6 +118,12 @@ model Organization {
   // N advertisers). The PlatformAuth row still mirrors the primary account
   // so legacy adapters/agent tools keep reading a single `accountId`.
   platformAccounts  PlatformAccount[]
+
+  // Growth OS (P18–P21)
+  promotedApps     PromotedApp[]
+  conversionEvents ConversionEvent[]
+  cohortSnapshots  CohortSnapshot[]
+  growthMetrics    GrowthMetric[]
 }
 
 model Webhook {
@@ -752,4 +758,98 @@ model PromptRun {
 
   @@index([promptVersionId, createdAt])
   @@index([decisionId])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Growth OS (P18–P21) — see docs/growth/00-cuddler-first-redesign.md §4
+// P18 foundation: the four models below. Creator*/AppReview land in P19.
+// ─────────────────────────────────────────────────────────────────────
+
+// An app being promoted (Cuddler iOS = first row). Ad campaigns with
+// objective=app_install point at one of these via Campaign.promotedAppId.
+model PromotedApp {
+  id             String   @id @default(cuid())
+  orgId          String
+  name           String
+  platform       String   // ios | android | web
+  bundleId       String?  // e.g. com.cuddler.main
+  storeId        String?  // App Store Connect id / Play package
+  deepLinkDomain String?  // e.g. cuddler.ai
+  skanEnabled    Boolean  @default(true)
+  extra          String?  // JSON: ASA org id, etc.
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, platform, bundleId])
+  @@index([orgId])
+}
+
+// Normalized conversion event from GA4 / RevenueCat / deeplink / MMP. The
+// measurement spine of the growth funnel; the unique key de-dupes on ingest.
+model ConversionEvent {
+  id          String   @id @default(cuid())
+  orgId       String
+  appId       String?  // -> PromotedApp.id (soft ref)
+  source      String   // ga4 | revenuecat | deeplink | adjust
+  eventName   String   // install | signup | first_chat | scene_generated | trial_start | subscription_activated | renewal | churn
+  occurredAt  DateTime
+  userKey     String?  // pseudonymized GA4 id / RC app_user_id
+  utmSource   String?
+  utmCampaign String?
+  channel     String?  // paid_meta_web | paid_asa | kol | organic | ...
+  country     String?
+  revenue     Float    @default(0) // net revenue for subscription events
+  raw         String?  // JSON
+  createdAt   DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, source, eventName, userKey, occurredAt])
+  @@index([orgId, eventName, occurredAt])
+  @@index([orgId, channel, occurredAt])
+  @@index([appId])
+}
+
+// Per-acquisition-day x channel cohort snapshot, recomputed daily over a
+// rolling 60-day window by the growth-sync cron. LTV via kpi-canon.
+model CohortSnapshot {
+  id            String   @id @default(cuid())
+  orgId         String
+  appId         String?
+  cohortDate    DateTime // acquisition day
+  channel       String
+  computedAt    DateTime @default(now())
+  installs      Int      @default(0)
+  activated     Int      @default(0) // first_chat completed
+  d1Retained    Int      @default(0)
+  d7Retained    Int      @default(0)
+  trials        Int      @default(0)
+  subscribers   Int      @default(0)
+  revenueToDate Float    @default(0)
+  ltvEstimate   Float    @default(0)
+  cac           Float?   // paid channels: spend / installs
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, appId, cohortDate, channel])
+  @@index([orgId, cohortDate])
+}
+
+// Non-cohort growth metric (k-factor, weekly shares, ASO rank, ...).
+model GrowthMetric {
+  id        String   @id @default(cuid())
+  orgId     String
+  date      DateTime
+  metric    String   // k_factor | weekly_scene_shares | aso_keyword_rank | ...
+  channel   String?
+  value     Float
+  dims      String?  // JSON extra dimensions
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, date, metric, channel])
+  @@index([orgId, date])
 }
