@@ -37,7 +37,11 @@ describe('tool catalog', () => {
       'pause_ad',
       'pause_ad_group',
       'pause_campaign',
+      'pause_creative',
+      'propose_paid_gate_change',
       'push_creative_to_platform',
+      'raise_growth_alert',
+      'reallocate_channel_budget',
       'resume_campaign',
       'rotate_creative',
       'start_experiment',
@@ -351,5 +355,34 @@ describe('push_creative_to_platform / generate_creative_variant', () => {
     expect(() =>
       TOOLS.generate_creative_variant.validate({ prompt: 'long enough', type: 'audio' })
     ).toThrow()
+  })
+})
+
+describe('growth tools (P21)', () => {
+  it('raise_growth_alert requires metric + detail, keeps optional channel/severity', () => {
+    expect(TOOLS.raise_growth_alert.validate({ metric: 'cac', detail: 'ASA CAC breach', channel: 'paid_asa', severity: 'alert' }))
+      .toEqual({ metric: 'cac', detail: 'ASA CAC breach', channel: 'paid_asa', severity: 'alert' })
+    expect(() => TOOLS.raise_growth_alert.validate({ metric: 'cac' })).toThrow()
+    // invalid severity is dropped, not thrown
+    expect(TOOLS.raise_growth_alert.validate({ metric: 'x', detail: 'y', severity: 'nope' })).toEqual({ metric: 'x', detail: 'y' })
+  })
+  it('pause_creative requires creativeId (medium, irreversible)', () => {
+    expect(TOOLS.pause_creative.validate({ creativeId: 'cr1', reason: 'fatigue' })).toEqual({ creativeId: 'cr1', reason: 'fatigue' })
+    expect(() => TOOLS.pause_creative.validate({})).toThrow()
+    expect(TOOLS.pause_creative.riskLevel).toBe('medium')
+    expect(TOOLS.pause_creative.reversible).toBe(false)
+  })
+  it('propose_paid_gate_change enforces the action enum (advisory, low risk)', () => {
+    expect(TOOLS.propose_paid_gate_change.validate({ channel: 'paid_meta_web', action: 'scale', rationale: 'LTV:CAC ok' }))
+      .toEqual({ channel: 'paid_meta_web', action: 'scale', rationale: 'LTV:CAC ok' })
+    expect(() => TOOLS.propose_paid_gate_change.validate({ channel: 'x', action: 'boost', rationale: 'y' })).toThrow()
+    expect(TOOLS.propose_paid_gate_change.riskLevel).toBe('low')
+  })
+  it('reallocate_channel_budget requires positive amount + distinct channels (high risk)', () => {
+    expect(TOOLS.reallocate_channel_budget.validate({ fromChannel: 'paid_meta_ios', toChannel: 'paid_asa', amountUsd: 50 }))
+      .toMatchObject({ fromChannel: 'paid_meta_ios', toChannel: 'paid_asa', amountUsd: 50 })
+    expect(() => TOOLS.reallocate_channel_budget.validate({ fromChannel: 'a', toChannel: 'a', amountUsd: 50 })).toThrow()
+    expect(() => TOOLS.reallocate_channel_budget.validate({ fromChannel: 'a', toChannel: 'b', amountUsd: 0 })).toThrow()
+    expect(TOOLS.reallocate_channel_budget.riskLevel).toBe('high')
   })
 })

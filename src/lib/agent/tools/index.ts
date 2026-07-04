@@ -16,6 +16,10 @@ import { adjustTargetingGeoTool } from './adjust-targeting-geo'
 import { adjustTargetingDemoTool } from './adjust-targeting-demo'
 import { pushCreativeToPlatformTool } from './push-creative-to-platform'
 import { generateCreativeVariantTool } from './generate-creative-variant'
+import { raiseGrowthAlertTool } from './raise-growth-alert'
+import { pauseCreativeTool } from './pause-creative'
+import { proposePaidGateChangeTool } from './propose-paid-gate-change'
+import { reallocateChannelBudgetTool } from './reallocate-channel-budget'
 
 export const TOOLS: Record<string, ToolDefinition<unknown>> = {
   // Phase 13 — low/medium risk
@@ -38,6 +42,11 @@ export const TOOLS: Record<string, ToolDefinition<unknown>> = {
   enable_smart_bidding: enableSmartBiddingTool as ToolDefinition<unknown>,
   adjust_targeting_geo: adjustTargetingGeoTool as ToolDefinition<unknown>,
   adjust_targeting_demo: adjustTargetingDemoTool as ToolDefinition<unknown>,
+  // Phase 21 — growth (funnel/channel/creative signals)
+  raise_growth_alert: raiseGrowthAlertTool as ToolDefinition<unknown>,
+  pause_creative: pauseCreativeTool as ToolDefinition<unknown>,
+  propose_paid_gate_change: proposePaidGateChangeTool as ToolDefinition<unknown>,
+  reallocate_channel_budget: reallocateChannelBudgetTool as ToolDefinition<unknown>,
 }
 
 export function getTool(name: string): ToolDefinition<unknown> | undefined {
