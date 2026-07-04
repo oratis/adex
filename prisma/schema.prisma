@@ -39,6 +39,7 @@ model User {
   sessions      Session[]
   invitesIssued InviteCode[] @relation("InviteCreator")
   inviteUsed    InviteCode?  @relation("InviteRedeemer")
+  creativeBriefs CreativeBrief[]
 }
 
 // Invite-only registration: only platform admins can mint codes; new accounts
@@ -126,6 +127,8 @@ model Organization {
   growthMetrics    GrowthMetric[]
   creatorPartnerships CreatorPartnership[]
   appReviews          AppReview[]
+  creativeBriefs      CreativeBrief[]
+  creativeVariants    CreativeVariant[]
 }
 
 model Webhook {
@@ -335,6 +338,8 @@ model Creative {
   filePath    String?
   fileUrl     String?
   prompt      String?  // AI generation prompt
+  sourceRef   String?  // e.g. Cuddler scene id/URL when source=imported_scene
+  tags        String?  // JSON array of creative tags (character/emotion/style/language)
   status      String   @default("ready") // generating, ready, failed
   width       Int?
   height      Int?
@@ -921,4 +926,56 @@ model AppReview {
 
   @@index([orgId, sentiment, reviewedAt])
   @@index([orgId, reviewedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Creative Studio (P20) — DCO-style creative production. A brief fans out
+// into a variant matrix (platform × format × hook × language); each variant
+// carries fitted copy + a produced Creative + platform-spec conformance.
+// Aligned with the IAB Dynamic Content Ads schema (base + swappable slots).
+// ─────────────────────────────────────────────────────────────────────
+
+model CreativeBrief {
+  id            String   @id @default(cuid())
+  orgId         String
+  userId        String
+  name          String
+  promotedAppId String?
+  product       String   // what's being promoted
+  audience      String?  // persona / segment
+  angle         String?  // messaging angle
+  platforms     String   // JSON array: [meta, tiktok, asa, google]
+  languages     String?  // JSON array (default ["en"])
+  status        String   @default("draft") // draft | generating | ready
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  org      Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  variants CreativeVariant[]
+
+  @@index([orgId])
+}
+
+model CreativeVariant {
+  id          String   @id @default(cuid())
+  briefId     String
+  orgId       String
+  platform    String   // meta | tiktok | asa | google
+  format      String   // reels_9x16 | feed_1x1 | in_feed_9x16 | search
+  hook        String?  // hook concept label
+  language    String   @default("en")
+  headline    String?
+  primaryText String?
+  cta         String?
+  creativeId  String?  // → Creative (produced asset)
+  specStatus  String   @default("pending") // pending | conforms | needs_transcode | rejected
+  specNotes   String?
+  createdAt   DateTime @default(now())
+
+  brief CreativeBrief @relation(fields: [briefId], references: [id], onDelete: Cascade)
+  org   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([briefId])
+  @@index([orgId])
 }
