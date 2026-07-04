@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { StatCard } from '@/components/layout/stat-card'
 import { formatCurrency, api } from '@/lib/utils'
+import { GrowthTabs, pct, channelLabel } from './_ui'
 
 interface FunnelShape {
   installs: number
@@ -30,23 +31,6 @@ interface Overview {
   updatedAt: string | null
 }
 
-const pct = (x: number) => `${(x * 100).toFixed(1)}%`
-
-const CHANNEL_LABEL: Record<string, string> = {
-  paid_meta_web: 'Meta → web',
-  paid_tiktok_web: 'TikTok → web',
-  paid_asa: 'Apple Search Ads',
-  paid_meta_ios: 'Meta iOS (SKAN)',
-  paid_tiktok_ios: 'TikTok iOS (SKAN)',
-  paid_google_uac: 'Google UAC',
-  kol: 'KOL',
-  referral: 'Referral',
-  organic: 'Organic',
-  seo: 'SEO',
-  aso: 'ASO',
-}
-const channelLabel = (c: string) => CHANNEL_LABEL[c] ?? c
-
 export default function GrowthPage() {
   const [data, setData] = useState<Overview | null>(null)
   const [loading, setLoading] = useState(true)
@@ -72,11 +56,13 @@ export default function GrowthPage() {
           </p>
         </div>
         {data?.updatedAt && (
-          <p className="text-xs text-gray-400">
-            Updated {new Date(data.updatedAt).toLocaleString()}
+          <p className="text-xs text-gray-400 font-mono">
+            updated {new Date(data.updatedAt).toLocaleString()}
           </p>
         )}
       </div>
+
+      <GrowthTabs />
 
       {loading ? (
         <p className="text-gray-500 text-sm py-8 text-center">Loading…</p>
