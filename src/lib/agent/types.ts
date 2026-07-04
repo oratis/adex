@@ -2,6 +2,7 @@
  * Shared types for the Agent runtime.
  */
 import type { Decision, DecisionStep, AgentConfig } from '@/generated/prisma/client'
+import type { GrowthSnapshot } from '@/lib/growth/agent-perceive'
 
 export type AgentMode = 'shadow' | 'approval_only' | 'autonomous'
 
@@ -51,6 +52,8 @@ export type PerceiveSnapshot = {
     classification?: string | null
   }>
   guardrailHints: string[]
+  /** Growth funnel/channel/gate/budget block (P21). Null for non-growth orgs. */
+  growth?: GrowthSnapshot | null
 }
 
 export type ProposedDecisionStep = {

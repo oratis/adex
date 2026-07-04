@@ -63,3 +63,6 @@ dev.db
 .idea/
 *.swp
 *.swo
+
+# Local Claude Code preview server config
+.claude/launch.json

@@ -6,6 +6,10 @@ import { fireWebhook } from '@/lib/webhooks'
 import { getAdapter, isAdaptablePlatform } from '@/lib/platforms/registry'
 import { upsertPlatformLink } from '@/lib/platforms/links'
 import { PlatformError, type LaunchCampaignInput } from '@/lib/platforms/adapter'
+import { validateLaunch, type AdPlatform, type CampaignObjective } from '@/lib/growth/campaign-objective'
+
+const GROWTH_OBJECTIVES = ['app_install', 'web_conversion']
+const GROWTH_PLATFORMS = ['google', 'meta', 'tiktok']
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -33,6 +37,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         { error: `No ${campaign.platform} authorization found` },
         { status: 400 }
       )
+
+    // P20 — app_install / web_conversion launch validation (SKAN campaign cap,
+    // app + destination requirements) before we hit the platform.
+    if (campaign.objective && GROWTH_OBJECTIVES.includes(campaign.objective) && GROWTH_PLATFORMS.includes(campaign.platform)) {
+      const promotedApp = campaign.promotedAppId
+        ? await prisma.promotedApp.findFirst({ where: { id: campaign.promotedAppId, orgId: org.id } })
+        : null
+      let existingIosCampaignCount = 0
+      if (promotedApp?.platform === 'ios') {
+        existingIosCampaignCount = await prisma.campaign.count({
+          where: { orgId: org.id, platform: campaign.platform, objective: 'app_install', status: 'active', promotedAppId: promotedApp.id, id: { not: campaign.id } },
+        })
+      }
+      const v = validateLaunch({
+        platform: campaign.platform as AdPlatform,
+        objective: campaign.objective as CampaignObjective,
+        promotedApp: promotedApp
+          ? { platform: promotedApp.platform, bundleId: promotedApp.bundleId, storeId: promotedApp.storeId, deepLinkDomain: promotedApp.deepLinkDomain }
+          : null,
+        existingIosCampaignCount,
+      })
+      if (!v.ok) {
+        return NextResponse.json({ error: `Launch validation failed: ${v.errors.join('; ')}`, errors: v.errors }, { status: 400 })
+      }
+    }
 
     const adapter = getAdapter(campaign.platform, auth)
     const budget = campaign.budgets[0]
