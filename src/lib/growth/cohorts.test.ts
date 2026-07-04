@@ -1,0 +1,87 @@
+import { describe, it, expect } from 'vitest'
+import { buildCohortSnapshots, dayKey, type RawEvent } from './cohorts'
+import { EVENTS } from './events'
+import { CHANNELS } from './channels'
+
+const D = (iso: string) => new Date(iso)
+
+function ev(p: Partial<RawEvent> & Pick<RawEvent, 'eventName' | 'occurredAt'>): RawEvent {
+  return { userKey: 'u1', channel: null, revenue: 0, ...p }
+}
+
+describe('dayKey', () => {
+  it('is a UTC calendar day', () => {
+    expect(dayKey(D('2026-07-04T23:30:00Z'))).toBe('2026-07-04')
+  })
+})
+
+describe('buildCohortSnapshots', () => {
+  it('places a user in the cohort of their first acquisition event', () => {
+    const rows = buildCohortSnapshots([
+      ev({ userKey: 'a', eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T10:00:00Z'), channel: CHANNELS.PAID_META_WEB }),
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ cohortDate: '2026-07-01', channel: CHANNELS.PAID_META_WEB, installs: 1 })
+  })
+
+  it('defaults channel to organic when the acquisition event has none', () => {
+    const rows = buildCohortSnapshots([
+      ev({ userKey: 'a', eventName: EVENTS.SIGNUP, occurredAt: D('2026-07-01T10:00:00Z') }),
+    ])
+    expect(rows[0].channel).toBe(CHANNELS.ORGANIC)
+  })
+
+  it('counts activation, D1/D7 retention, trial, subscriber, revenue for one user', () => {
+    const base = 'u'
+    const rows = buildCohortSnapshots([
+      ev({ userKey: base, eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T08:00:00Z'), channel: CHANNELS.PAID_ASA }),
+      ev({ userKey: base, eventName: EVENTS.FIRST_CHAT, occurredAt: D('2026-07-01T09:00:00Z') }),
+      ev({ userKey: base, eventName: EVENTS.SCENE_GENERATED, occurredAt: D('2026-07-02T09:00:00Z') }), // D1
+      ev({ userKey: base, eventName: EVENTS.FIRST_CHAT, occurredAt: D('2026-07-08T09:00:00Z') }), // D7
+      ev({ userKey: base, eventName: EVENTS.TRIAL_START, occurredAt: D('2026-07-03T09:00:00Z') }),
+      ev({ userKey: base, eventName: EVENTS.SUBSCRIPTION_ACTIVATED, occurredAt: D('2026-07-06T09:00:00Z'), revenue: 9.9 }),
+    ])
+    expect(rows[0]).toMatchObject({
+      installs: 1, activated: 1, d1Retained: 1, d7Retained: 1, trials: 1, subscribers: 1, revenueToDate: 9.9,
+    })
+    expect(rows[0].ltvEstimate).toBeCloseTo(9.9) // realized: 9.9 / 1 install
+  })
+
+  it('attributes RC revenue (channel-less) to the acquisition channel via userKey', () => {
+    const rows = buildCohortSnapshots([
+      ev({ userKey: 'a', eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T08:00:00Z'), channel: CHANNELS.PAID_TIKTOK_WEB }),
+      ev({ userKey: 'a', eventName: EVENTS.SUBSCRIPTION_ACTIVATED, occurredAt: D('2026-07-05T08:00:00Z'), channel: null, revenue: 9.9 }),
+    ])
+    expect(rows[0].channel).toBe(CHANNELS.PAID_TIKTOK_WEB)
+    expect(rows[0].revenueToDate).toBeCloseTo(9.9)
+    expect(rows[0].subscribers).toBe(1)
+  })
+
+  it('ignores events with no userKey and users with no acquisition event', () => {
+    const rows = buildCohortSnapshots([
+      ev({ userKey: null, eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T08:00:00Z'), channel: CHANNELS.PAID_ASA }),
+      ev({ userKey: 'orphan', eventName: EVENTS.SUBSCRIPTION_ACTIVATED, occurredAt: D('2026-07-05T08:00:00Z'), revenue: 9.9 }),
+    ])
+    expect(rows).toHaveLength(0)
+  })
+
+  it('separates two channels acquired on the same day', () => {
+    const rows = buildCohortSnapshots([
+      ev({ userKey: 'a', eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T08:00:00Z'), channel: CHANNELS.PAID_META_WEB }),
+      ev({ userKey: 'b', eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T09:00:00Z'), channel: CHANNELS.PAID_ASA }),
+    ])
+    expect(rows).toHaveLength(2)
+    expect(rows.map((r) => r.channel).sort()).toEqual([CHANNELS.PAID_ASA, CHANNELS.PAID_META_WEB].sort())
+  })
+
+  it('computes CAC from supplied spend, else null', () => {
+    const events = [
+      ev({ userKey: 'a', eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T08:00:00Z'), channel: CHANNELS.PAID_ASA }),
+      ev({ userKey: 'b', eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T09:00:00Z'), channel: CHANNELS.PAID_ASA }),
+    ]
+    const spend = new Map([[`2026-07-01|${CHANNELS.PAID_ASA}`, 20]])
+    const rows = buildCohortSnapshots(events, { spendByCohort: spend })
+    expect(rows[0].cac).toBeCloseTo(10) // $20 / 2 installs
+    expect(buildCohortSnapshots(events)[0].cac).toBeNull()
+  })
+})

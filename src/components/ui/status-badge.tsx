@@ -10,19 +10,21 @@ export type DecisionStatus =
   | 'executing'
   | string
 
+// loopback tokens. `executing` = agent cyan (the agent is acting) — the
+// human/agent agency encoding runs through the whole status vocabulary.
 const COLORS: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700',
-  executed: 'bg-emerald-100 text-emerald-700',
-  failed: 'bg-rose-100 text-rose-700',
-  skipped: 'bg-gray-100 text-gray-600',
-  rejected: 'bg-gray-200 text-gray-700',
-  rolled_back: 'bg-purple-100 text-purple-700',
-  executing: 'bg-blue-100 text-blue-700',
+  pending: 'bg-warn/10 text-warn border border-warn/25',
+  executed: 'bg-ok/10 text-ok border border-ok/25',
+  failed: 'bg-bad/10 text-bad border border-bad/25',
+  skipped: 'bg-mut/10 text-mut border border-line',
+  rejected: 'bg-mut/10 text-mut border border-line',
+  rolled_back: 'bg-max/10 text-max border border-max/25',
+  executing: 'bg-ai/10 text-ai border border-ai/25',
   // Verify-related
-  improved: 'bg-emerald-100 text-emerald-700',
-  neutral: 'bg-gray-100 text-gray-700',
-  worse: 'bg-rose-100 text-rose-700',
-  inconclusive: 'bg-amber-100 text-amber-700',
+  improved: 'bg-ok/10 text-ok border border-ok/25',
+  neutral: 'bg-mut/10 text-mut border border-line',
+  worse: 'bg-bad/10 text-bad border border-bad/25',
+  inconclusive: 'bg-warn/10 text-warn border border-warn/25',
 }
 
 /**
@@ -43,7 +45,7 @@ export function StatusBadge({
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+        'inline-flex items-center rounded px-2 py-0.5 text-[11px] font-mono font-medium',
         cls,
         className
       )}

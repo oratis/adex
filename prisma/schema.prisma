@@ -118,6 +118,14 @@ model Organization {
   // N advertisers). The PlatformAuth row still mirrors the primary account
   // so legacy adapters/agent tools keep reading a single `accountId`.
   platformAccounts  PlatformAccount[]
+
+  // Growth OS (P18–P21)
+  promotedApps     PromotedApp[]
+  conversionEvents ConversionEvent[]
+  cohortSnapshots  CohortSnapshot[]
+  growthMetrics    GrowthMetric[]
+  creatorPartnerships CreatorPartnership[]
+  appReviews          AppReview[]
 }
 
 model Webhook {
@@ -252,7 +260,8 @@ model Campaign {
   name            String
   platform        String   // google, meta, tiktok
   status          String   @default("draft") // draft, active, paused, completed
-  objective       String?  // awareness, consideration, conversion
+  objective       String?  // awareness, consideration, conversion, app_install, web_conversion
+  promotedAppId   String?  // → PromotedApp.id for app_install / web_conversion campaigns
   targetCountries String?  // JSON array of country codes
   targetAudience  String?  // JSON object with demographics
   targetInterests String?  // JSON array of interests
@@ -752,4 +761,164 @@ model PromptRun {
 
   @@index([promptVersionId, createdAt])
   @@index([decisionId])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Growth OS (P18–P21) — see docs/growth/00-cuddler-first-redesign.md §4
+// P18 foundation: the four models below. Creator*/AppReview land in P19.
+// ─────────────────────────────────────────────────────────────────────
+
+// An app being promoted (Cuddler iOS = first row). Ad campaigns with
+// objective=app_install point at one of these via Campaign.promotedAppId.
+model PromotedApp {
+  id             String   @id @default(cuid())
+  orgId          String
+  name           String
+  platform       String   // ios | android | web
+  bundleId       String?  // e.g. com.cuddler.main
+  storeId        String?  // App Store Connect id / Play package
+  deepLinkDomain String?  // e.g. cuddler.ai
+  skanEnabled    Boolean  @default(true)
+  extra          String?  // JSON: ASA org id, etc.
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, platform, bundleId])
+  @@index([orgId])
+}
+
+// Normalized conversion event from GA4 / RevenueCat / deeplink / MMP. The
+// measurement spine of the growth funnel; the unique key de-dupes on ingest.
+model ConversionEvent {
+  id          String   @id @default(cuid())
+  orgId       String
+  appId       String?  // -> PromotedApp.id (soft ref)
+  source      String   // ga4 | revenuecat | deeplink | adjust
+  eventName   String   // install | signup | first_chat | scene_generated | trial_start | subscription_activated | renewal | churn
+  occurredAt  DateTime
+  userKey     String?  // pseudonymized GA4 id / RC app_user_id
+  utmSource   String?
+  utmCampaign String?
+  channel     String?  // paid_meta_web | paid_asa | kol | organic | ...
+  country     String?
+  revenue     Float    @default(0) // net revenue for subscription events
+  raw         String?  // JSON
+  createdAt   DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, source, eventName, userKey, occurredAt])
+  @@index([orgId, eventName, occurredAt])
+  @@index([orgId, channel, occurredAt])
+  @@index([appId])
+}
+
+// Per-acquisition-day x channel cohort snapshot, recomputed daily over a
+// rolling 60-day window by the growth-sync cron. LTV via kpi-canon.
+model CohortSnapshot {
+  id            String   @id @default(cuid())
+  orgId         String
+  appId         String?
+  cohortDate    DateTime // acquisition day
+  channel       String
+  computedAt    DateTime @default(now())
+  installs      Int      @default(0)
+  activated     Int      @default(0) // first_chat completed
+  d1Retained    Int      @default(0)
+  d7Retained    Int      @default(0)
+  trials        Int      @default(0)
+  subscribers   Int      @default(0)
+  revenueToDate Float    @default(0)
+  ltvEstimate   Float    @default(0)
+  cac           Float?   // paid channels: spend / installs
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, appId, cohortDate, channel])
+  @@index([orgId, cohortDate])
+}
+
+// Non-cohort growth metric (k-factor, weekly shares, ASO rank, ...).
+model GrowthMetric {
+  id        String   @id @default(cuid())
+  orgId     String
+  date      DateTime
+  metric    String   // k_factor | weekly_scene_shares | aso_keyword_rank | ...
+  channel   String?
+  value     Float
+  dims      String?  // JSON extra dimensions
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, date, metric, channel])
+  @@index([orgId, date])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Growth OS (P19) — organic attribution: KOL partnerships + app reviews
+// ─────────────────────────────────────────────────────────────────────
+
+// A creator/KOL cooperation (model + attribution method from hakko-kol-agent).
+model CreatorPartnership {
+  id           String   @id @default(cuid())
+  orgId        String
+  name         String
+  platform     String   // tiktok | youtube | discord | reddit | x
+  handle       String?
+  status       String   @default("negotiating") // negotiating|agreed|published|settled|dropped
+  costUsd      Float    @default(0) // cash + valued perks (e.g. comped Ultra)
+  contractNote String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  org   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  posts CreatorPost[]
+
+  @@index([orgId, status])
+}
+
+model CreatorPost {
+  id            String    @id @default(cuid())
+  partnershipId String
+  url           String
+  publishedAt   DateTime?
+  views         Int       @default(0)
+  likes         Int       @default(0)
+  comments      Int       @default(0)
+  // Natural-uplift attribution: installs above the pre-publish baseline.
+  baselineInstalls Float  @default(0)
+  upliftInstalls   Float  @default(0)
+  effectiveCpi     Float?
+  lastSyncedAt  DateTime?
+  createdAt     DateTime  @default(now())
+
+  partnership CreatorPartnership @relation(fields: [partnershipId], references: [id], onDelete: Cascade)
+
+  @@index([partnershipId])
+}
+
+// App store review + LLM classification (prompt ported from Feedback_agent).
+// id = source:review_id hash → naturally idempotent on re-ingest.
+model AppReview {
+  id         String   @id
+  orgId      String
+  appId      String?
+  source     String   // app_store | google_play
+  country    String?
+  rating     Int?
+  title      String?
+  body       String?
+  reviewedAt DateTime
+  sentiment  String?  // positive | neutral | negative | mixed
+  topics     String?  // JSON array
+  priority   String?  // P0..P3
+  createdAt  DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, sentiment, reviewedAt])
+  @@index([orgId, reviewedAt])
 }

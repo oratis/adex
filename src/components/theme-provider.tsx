@@ -26,14 +26,15 @@ const STORAGE_KEY = 'adex.theme'
 const THEME_CHANGE = 'adex:theme-change'
 
 function readStoredTheme(): Theme {
-  if (typeof window === 'undefined') return 'system'
+  // Adex is dark-first (loopback). No stored preference → dark.
+  if (typeof window === 'undefined') return 'dark'
   try {
     const v = window.localStorage.getItem(STORAGE_KEY)
     if (v === 'light' || v === 'dark' || v === 'system') return v
   } catch {
     // ignore
   }
-  return 'system'
+  return 'dark'
 }
 
 function subscribeTheme(cb: () => void): () => void {
@@ -70,7 +71,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const theme = useSyncExternalStore(
     subscribeTheme,
     readStoredTheme,
-    () => 'system' as Theme
+    () => 'dark' as Theme
   )
 
   const systemIsDark = useSyncExternalStore(

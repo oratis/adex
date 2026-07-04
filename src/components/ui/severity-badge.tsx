@@ -3,10 +3,10 @@ import { cn } from '@/lib/utils'
 export type Severity = 'info' | 'opportunity' | 'warning' | 'alert' | string
 
 const COLORS: Record<string, string> = {
-  info: 'bg-gray-100 text-gray-700',
-  opportunity: 'bg-emerald-100 text-emerald-700',
-  warning: 'bg-amber-100 text-amber-700',
-  alert: 'bg-rose-100 text-rose-700',
+  info: 'bg-mut/10 text-mut border border-line',
+  opportunity: 'bg-ok/10 text-ok border border-ok/25',
+  warning: 'bg-warn/10 text-warn border border-warn/25',
+  alert: 'bg-bad/10 text-bad border border-bad/25',
 }
 
 /**
@@ -24,7 +24,7 @@ export function SeverityBadge({
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+        'inline-flex items-center rounded px-2 py-0.5 text-[11px] font-mono font-medium',
         cls,
         className
       )}
