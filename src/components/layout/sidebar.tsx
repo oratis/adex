@@ -11,6 +11,7 @@ import { LOCALES, LOCALE_LABELS, type Locale } from '@/lib/i18n'
 
 const navItems = [
   { href: '/dashboard',        key: 'nav.dashboard',        icon: '📊' },
+  { href: '/growth',           key: 'nav.growth',           icon: '🌱' },
   { href: '/campaigns',        key: 'nav.campaigns',        icon: '🎯' },
   { href: '/seedance2',        key: 'nav.seedance2',        icon: '🎬' },
   { href: '/assets',           key: 'nav.assets',           icon: '📂' },
@@ -45,6 +46,7 @@ const adminItems = [
 // key isn't in the dictionary yet. Keeps sidebar functional during partial
 // i18n rollouts.
 const NAV_FALLBACK: Record<string, string> = {
+  'nav.growth': 'Growth',
   'nav.decisions': 'Decisions',
   'nav.approvals': 'Approvals',
   'nav.guardrails': 'Guardrails',
