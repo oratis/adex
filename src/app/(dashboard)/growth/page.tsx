@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { StatCard } from '@/components/layout/stat-card'
 import { formatCurrency, api } from '@/lib/utils'
-import { GrowthTabs, pct, channelLabel } from './_ui'
+import { GrowthTabs, AgentPulse, pct, channelLabel } from './_ui'
 
 interface FunnelShape {
   installs: number
@@ -64,6 +64,8 @@ export default function GrowthPage() {
 
       <GrowthTabs />
 
+      <AgentPulse note={data?.hasData ? `${data.channels.length} channels` : 'awaiting data'} />
+
       {loading ? (
         <p className="text-gray-500 text-sm py-8 text-center">Loading…</p>
       ) : error ? (
@@ -119,14 +121,14 @@ export default function GrowthPage() {
                     {data.channels.map((c) => (
                       <tr key={c.channel} className="border-b last:border-0">
                         <td className="py-3 font-medium">{channelLabel(c.channel)}</td>
-                        <td className="py-3 text-right">{c.installs.toLocaleString()}</td>
-                        <td className="py-3 text-right">{pct(c.activationRate)}</td>
-                        <td className="py-3 text-right">{pct(c.d1Rate)}</td>
-                        <td className="py-3 text-right">{pct(c.d7Rate)}</td>
-                        <td className="py-3 text-right">{c.subscribers.toLocaleString()}</td>
-                        <td className="py-3 text-right">{pct(c.subscriptionRate)}</td>
-                        <td className="py-3 text-right">{formatCurrency(c.ltv)}</td>
-                        <td className="py-3 text-right">{c.cac === null ? '—' : formatCurrency(c.cac)}</td>
+                        <td className="py-3 text-right font-mono tabular-nums">{c.installs.toLocaleString()}</td>
+                        <td className="py-3 text-right font-mono tabular-nums">{pct(c.activationRate)}</td>
+                        <td className="py-3 text-right font-mono tabular-nums">{pct(c.d1Rate)}</td>
+                        <td className="py-3 text-right font-mono tabular-nums">{pct(c.d7Rate)}</td>
+                        <td className="py-3 text-right font-mono tabular-nums">{c.subscribers.toLocaleString()}</td>
+                        <td className="py-3 text-right font-mono tabular-nums">{pct(c.subscriptionRate)}</td>
+                        <td className="py-3 text-right font-mono tabular-nums">{formatCurrency(c.ltv)}</td>
+                        <td className="py-3 text-right font-mono tabular-nums">{c.cac === null ? '—' : formatCurrency(c.cac)}</td>
                       </tr>
                     ))}
                   </tbody>

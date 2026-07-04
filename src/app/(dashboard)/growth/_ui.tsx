@@ -55,6 +55,16 @@ export function GrowthTabs() {
   )
 }
 
+/** loopback agent heartbeat strip — the terminal `live●` signature. */
+export function AgentPulse({ note }: { note?: string }) {
+  return (
+    <div className="flex items-center gap-2 text-[11px] font-mono text-dim">
+      <span className="lb-live" />
+      <span>agent · growth-sync nightly · 127.0.0.1 :: ready{note ? ` · ${note}` : ''}</span>
+    </div>
+  )
+}
+
 /** loopback-styled gate chip: scale=ok, halve/kill/freeze=warn/bad, else muted. */
 export function GateBadge({ decision }: { decision: string }) {
   const map: Record<string, string> = {
