@@ -20,6 +20,7 @@ const navItems: NavItem[] = [
   { href: '/seedance2',        key: 'nav.seedance2',        icon: '🎬' },
   { href: '/assets',           key: 'nav.assets',           icon: '📂' },
   { href: '/creatives',        key: 'nav.creatives',        icon: '🎨' },
+  { href: '/creatives/studio', key: 'nav.creative_studio',  icon: '🎛️' },
   { href: '/budget',           key: 'nav.budget',           icon: '💰' },
   { href: '/advisor',          key: 'nav.advisor',          icon: '🤖', agent: true },
   { href: '/decisions',        key: 'nav.decisions',        icon: '🧠', agent: true },
@@ -51,6 +52,7 @@ const adminItems = [
 // i18n rollouts.
 const NAV_FALLBACK: Record<string, string> = {
   'nav.growth': 'Growth',
+  'nav.creative_studio': 'Creative Studio',
   'nav.decisions': 'Decisions',
   'nav.approvals': 'Approvals',
   'nav.guardrails': 'Guardrails',
