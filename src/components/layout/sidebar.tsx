@@ -9,7 +9,11 @@ import { NotificationBell } from './notification-bell'
 import { useT } from '@/components/i18n-provider'
 import { LOCALES, LOCALE_LABELS, type Locale } from '@/lib/i18n'
 
-const navItems = [
+// `agent: true` marks the AI-agent-loop surfaces. Per the loopback design
+// language, these render in cyan (agent) while human/brand surfaces use lime.
+type NavItem = { href: string; key: string; icon: string; agent?: boolean }
+
+const navItems: NavItem[] = [
   { href: '/dashboard',        key: 'nav.dashboard',        icon: '📊' },
   { href: '/growth',           key: 'nav.growth',           icon: '🌱' },
   { href: '/campaigns',        key: 'nav.campaigns',        icon: '🎯' },
@@ -17,15 +21,15 @@ const navItems = [
   { href: '/assets',           key: 'nav.assets',           icon: '📂' },
   { href: '/creatives',        key: 'nav.creatives',        icon: '🎨' },
   { href: '/budget',           key: 'nav.budget',           icon: '💰' },
-  { href: '/advisor',          key: 'nav.advisor',          icon: '🤖' },
-  { href: '/decisions',        key: 'nav.decisions',        icon: '🧠' },
-  { href: '/approvals',        key: 'nav.approvals',        icon: '🛂' },
-  { href: '/guardrails',       key: 'nav.guardrails',       icon: '🚧' },
-  { href: '/experiments',      key: 'nav.experiments',      icon: '🧪' },
-  { href: '/prompts',          key: 'nav.prompts',          icon: '📝' },
-  { href: '/agent-cost',       key: 'nav.agent_cost',       icon: '💵' },
-  { href: '/agent-stats',      key: 'nav.agent_stats',      icon: '📈' },
-  { href: '/agent-onboarding', key: 'nav.agent_onboarding', icon: '🚀' },
+  { href: '/advisor',          key: 'nav.advisor',          icon: '🤖', agent: true },
+  { href: '/decisions',        key: 'nav.decisions',        icon: '🧠', agent: true },
+  { href: '/approvals',        key: 'nav.approvals',        icon: '🛂', agent: true },
+  { href: '/guardrails',       key: 'nav.guardrails',       icon: '🚧', agent: true },
+  { href: '/experiments',      key: 'nav.experiments',      icon: '🧪', agent: true },
+  { href: '/prompts',          key: 'nav.prompts',          icon: '📝', agent: true },
+  { href: '/agent-cost',       key: 'nav.agent_cost',       icon: '💵', agent: true },
+  { href: '/agent-stats',      key: 'nav.agent_stats',      icon: '📈', agent: true },
+  { href: '/agent-onboarding', key: 'nav.agent_onboarding', icon: '🚀', agent: true },
   { href: '/webhooks',         key: 'nav.webhooks',         icon: '📡' },
   { href: '/creatives/review', key: 'nav.creative_review',  icon: '🖼️' },
   { href: '/orphans',          key: 'nav.orphans',          icon: '👻' },
@@ -151,7 +155,7 @@ export function Sidebar({
       )}
       <aside
         className={cn(
-          'bg-gray-900 text-white min-h-screen flex flex-col z-40',
+          'bg-[#070809] text-ink min-h-screen flex flex-col z-40 border-r border-line',
           // Desktop: always visible, fixed width
           'md:w-64 md:relative md:translate-x-0',
           // Mobile: drawer that slides in from left
@@ -161,7 +165,7 @@ export function Sidebar({
       >
       <div className="px-6 py-5 border-b border-gray-800 flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">
-          <span className="text-blue-400">Ad</span>ex
+          <span className="text-signal">Ad</span>ex
         </h1>
         <button
           onClick={() => setMobileOpen(false)}
@@ -240,18 +244,25 @@ export function Sidebar({
           // to a hard-coded English label when present (sidebar nav additions
           // shouldn't have to wait on localization to be usable).
           const text = label === item.key ? labelFallback(item.key) : label
+          const active = pathname.startsWith(item.href)
+          // Agency encoding: agent-loop surfaces = cyan; human/brand = lime.
+          const cls = active
+            ? item.agent
+              ? 'bg-ai/10 text-ai'
+              : 'bg-signal/10 text-signal'
+            : item.agent
+              ? 'text-ai/60 hover:bg-surface hover:text-ai'
+              : 'text-gray-300 hover:bg-surface hover:text-white'
           return (
             <Link
               key={item.href}
               href={item.href}
               className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                pathname.startsWith(item.href)
-                  ? 'bg-blue-600/20 text-blue-400'
-                  : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                'flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+                cls
               )}
             >
-              <span className="text-lg">{item.icon}</span>
+              <span className="text-base">{item.icon}</span>
               {text}
             </Link>
           )
@@ -283,7 +294,10 @@ export function Sidebar({
           </>
         )}
       </nav>
-      <div className="px-4 py-4 border-t border-gray-800 space-y-2">
+      <div className="px-4 py-4 border-t border-line space-y-2">
+        <div className="px-3 flex items-center gap-2 text-[10px] font-mono text-dim tracking-tight">
+          <span className="lb-live" /> agent · 127.0.0.1 :: ready
+        </div>
         {userName && (
           <div className="px-3 text-xs text-gray-500 truncate" title={userName}>
             {t('nav.signed_in_as')} <span className="text-gray-300">{userName}</span>

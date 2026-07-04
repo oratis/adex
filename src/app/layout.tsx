@@ -8,16 +8,18 @@ export const metadata: Metadata = {
   description: "AI-powered automated ad placement across Google, Meta, and TikTok",
 };
 
-// Runs before React hydrates — reads localStorage/theme preference and
-// applies .dark to <html> to avoid a flash of the wrong theme.
+// Runs before React hydrates — applies .dark to <html> to avoid a flash of
+// the wrong theme. Adex is dark-first (loopback design language): dark unless
+// the user has explicitly chosen light.
 const themeInitScript = `
 (function() {
   try {
     var saved = localStorage.getItem('adex.theme');
-    var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    var useDark = saved === 'dark' || (saved !== 'light' && prefersDark);
+    var useDark = saved !== 'light';
     if (useDark) document.documentElement.classList.add('dark');
-  } catch (e) {}
+  } catch (e) {
+    document.documentElement.classList.add('dark');
+  }
 })();
 `;
 
