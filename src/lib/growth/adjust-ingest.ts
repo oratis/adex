@@ -19,6 +19,7 @@
 
 import { EVENTS, SOURCES, type ConversionEventInput, type EventName, type Os } from './events'
 import { resolveAdjustChannel } from './channels'
+import { parseCampaignName } from './campaign-name'
 
 /** Adjust `event_token` → our canonical EventName. Unmapped tokens are dropped. */
 export type AdjustEventTokenMap = Record<string, EventName>
@@ -80,7 +81,15 @@ export function mapAdjustCallback(
 
   const userKey = params.app_user_id?.trim() || (params.adid ? `adjust:${params.adid}` : null)
 
+  // channel stays authoritative from network_name (resolveAdjustChannel) —
+  // the campaign-name parse below is only consulted for os fallback and the
+  // agency/bidStrategy/conversionGoal dimensions it uniquely owns (bi §7).
   const { channel } = resolveAdjustChannel(params.network_name, params.campaign_name)
+  const parsedName = parseCampaignName(params.campaign_name)
+
+  // os is authoritative from Adjust's own os_name/device_type fields;
+  // campaign-name-derived os is only a fallback when both are absent.
+  const os = normalizeAdjustOs(params) ?? parsedName?.os ?? null
 
   return {
     source: SOURCES.ADJUST,
@@ -89,9 +98,12 @@ export function mapAdjustCallback(
     userKey,
     utmCampaign: params.campaign_name ?? null,
     channel,
-    os: normalizeAdjustOs(params),
+    os,
     country: params.country ?? null,
     revenue: 0,
+    agency: parsedName?.agency ?? null,
+    bidStrategy: parsedName?.bidStrategy ?? null,
+    conversionGoal: parsedName?.goal ?? null,
     raw: params,
   }
 }

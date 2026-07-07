@@ -19,6 +19,8 @@ import {
   roi,
   arpu,
   arppu,
+  aggregateCohortWindow,
+  computeFunnelMetrics,
 } from './kpi-canon'
 
 describe('rate metrics', () => {
@@ -157,5 +159,86 @@ describe('bi §6 summary metrics', () => {
     expect(arppu(100, 0)).toBe(0)
     expect(arpu(100, 50)).toBeCloseTo(2)
     expect(arppu(100, 10)).toBeCloseTo(10)
+  })
+})
+
+describe('aggregateCohortWindow — bi §7 shared cohort folding', () => {
+  const now = new Date('2026-07-10T00:00:00.000Z')
+
+  it('sums cohortSize/signups/revenue across rows regardless of maturity', () => {
+    const agg = aggregateCohortWindow(
+      [
+        { cohortDate: '2026-07-01', installs: 5, signups: 5, d1Retained: 2, d7Retained: 1, revenueD0: 10, revenueD7: 20 },
+        { cohortDate: '2026-07-09', installs: 3, signups: 0, d1Retained: 1, d7Retained: 0, revenueD0: 5, revenueD7: 5 },
+      ],
+      now,
+    )
+    expect(agg.cohortSize).toBe(13)
+    expect(agg.signups).toBe(5)
+    expect(agg.revenueD0).toBe(15)
+    expect(agg.revenueD7).toBe(25)
+  })
+
+  it('gates d1/d7 numerator+denominator by maturity — immature cohorts excluded from both', () => {
+    // 2026-07-09 + 1 day = 2026-07-10 (mature as of `now`); +7 days = 2026-07-16 (immature)
+    const agg = aggregateCohortWindow(
+      [{ cohortDate: '2026-07-09', installs: 10, signups: 0, d1Retained: 4, d7Retained: 9, revenueD0: 0, revenueD7: 0 }],
+      now,
+    )
+    expect(agg.d1).toBe(4)
+    expect(agg.d1Base).toBe(10)
+    expect(agg.d7).toBe(0)
+    expect(agg.d7Base).toBe(0)
+  })
+
+  it('empty input yields an all-zero aggregate', () => {
+    expect(aggregateCohortWindow([], now)).toEqual({
+      cohortSize: 0,
+      signups: 0,
+      d1: 0,
+      d1Base: 0,
+      d7: 0,
+      d7Base: 0,
+      revenueD0: 0,
+      revenueD7: 0,
+    })
+  })
+})
+
+describe('computeFunnelMetrics — bi §7 shared funnel formula', () => {
+  it('derives costPerSignup/d1Rate/d7Rate/d0Roi/d7Roi from a window aggregate + spend', () => {
+    const result = computeFunnelMetrics({
+      spend: 100,
+      signups: 20,
+      d1Retained: 4,
+      d1Base: 20,
+      d7Retained: 2,
+      d7Base: 20,
+      revenueD0: 50,
+      revenueD7: 150,
+    })
+    expect(result.costPerSignup).toBeCloseTo(5)
+    expect(result.d1Rate).toBeCloseTo(0.2)
+    expect(result.d7Rate).toBeCloseTo(0.1)
+    expect(result.d0Roi).toBeCloseTo(0.5)
+    expect(result.d7Roi).toBeCloseTo(1.5)
+  })
+
+  it('costPerSignup and roi are null on zero spend/signups; rates are 0 not NaN', () => {
+    const result = computeFunnelMetrics({
+      spend: 0,
+      signups: 0,
+      d1Retained: 0,
+      d1Base: 0,
+      d7Retained: 0,
+      d7Base: 0,
+      revenueD0: 0,
+      revenueD7: 0,
+    })
+    expect(result.costPerSignup).toBeNull()
+    expect(result.d0Roi).toBeNull()
+    expect(result.d7Roi).toBeNull()
+    expect(result.d1Rate).toBe(0)
+    expect(result.d7Rate).toBe(0)
   })
 })

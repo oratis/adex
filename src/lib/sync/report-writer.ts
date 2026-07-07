@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import type { PlatformAdapter, AccountReport, CampaignReport } from '@/lib/platforms/adapter'
 import { upsertPlatformLink } from '@/lib/platforms/links'
+import { parseCampaignName } from '@/lib/growth/campaign-name'
 
 export type SyncMetrics = {
   impressions: number
@@ -45,6 +46,21 @@ function fromCampaignReport(r: CampaignReport): SyncMetrics {
 }
 
 /**
+ * Media-buying agency of record for a platform, when one is on file
+ * (PlatformAccount.agency). Reads the primary account row for the platform;
+ * orgs without a PlatformAccount row at all (legacy single-token auth) or
+ * without an agency set simply get `null` — never guessed. Shared by the
+ * legacy (`reports/sync` route) and adapter-driven (below) write paths so
+ * there's a single fallback implementation.
+ */
+export async function resolveReportAgency(orgId: string, platform: string): Promise<string | null> {
+  const account = await prisma.platformAccount.findFirst({
+    where: { orgId, platform, isPrimary: true },
+  })
+  return account?.agency ?? null
+}
+
+/**
  * Upsert one Report row at level=account. Uses the legacy
  * "${platform}-${orgId}-${endDate}" id so existing dashboard code keeps
  * working unchanged.
@@ -86,6 +102,16 @@ export async function writeAccountReport(opts: {
  * Upsert one Report row per campaign per day. Resolves (or creates) the
  * PlatformLink so that future agent reads can join Reports back to the local
  * campaign. Date is taken from each row, not opts.date.
+ *
+ * Agency (bi §7): campaign rows are stamped from the campaign name itself —
+ * `parseCampaignName(row.campaignName).agency` — since the agency who bought
+ * the media is encoded in the naming convention, not something the platform
+ * API reports directly. Priority:
+ *   1. campaign-name parse (per-row, most specific)
+ *   2. PlatformAccount.agency (`resolveReportAgency`, org/platform-level fallback)
+ * Rows with neither a parseable campaign name nor a PlatformAccount.agency on
+ * file are left `null` — never guessed. The org/platform-level fallback is
+ * resolved once per call (not per row) since it can't vary within a sync.
  */
 export async function writeCampaignReports(opts: {
   orgId: string
@@ -94,6 +120,8 @@ export async function writeCampaignReports(opts: {
   accountId: string
   rows: CampaignReport[]
 }) {
+  const fallbackAgency = await resolveReportAgency(opts.orgId, opts.platform)
+
   for (const row of opts.rows) {
     if (!row.platformCampaignId) continue
     const link = await upsertPlatformLink({
@@ -114,6 +142,7 @@ export async function writeCampaignReports(opts: {
     const id = `${opts.platform}-${opts.orgId}-camp-${row.platformCampaignId}-${dateStr}`
     const metrics = fromCampaignReport(row)
     const d = derived(metrics)
+    const agency = parseCampaignName(row.campaignName)?.agency ?? fallbackAgency
     await prisma.report.upsert({
       where: { id },
       update: {
@@ -121,6 +150,7 @@ export async function writeCampaignReports(opts: {
         ...d,
         level: 'campaign',
         campaignLinkId: link.id,
+        agency,
         rawData: JSON.stringify(row),
       },
       create: {
@@ -131,6 +161,7 @@ export async function writeCampaignReports(opts: {
         date,
         level: 'campaign',
         campaignLinkId: link.id,
+        agency,
         ...metrics,
         ...d,
         rawData: JSON.stringify(row),

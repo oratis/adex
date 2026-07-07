@@ -816,6 +816,12 @@ model ConversionEvent {
   os          String?  // ios | android | web
   country     String?
   revenue     Float    @default(0) // net revenue for subscription events
+  // Campaign-name-derived dimensions (docs/growth/06-mmp-ingest.md §7): parsed
+  // from the MMP callback's campaign_name via campaign-name.ts. Null when the
+  // campaign name is missing or doesn't parse (not guessed).
+  agency         String?
+  bidStrategy    String?
+  conversionGoal String?
   raw         String?  // JSON
   createdAt   DateTime @default(now())
 
@@ -839,6 +845,10 @@ model CohortSnapshot {
   // bi rollout. Included in the group key (bi §6) — see the null-uniqueness
   // caveat below.
   os            String?
+  // Campaign-name-derived agency for the anchored user's attributed install
+  // event (docs/growth/06-mmp-ingest.md §7), same source/priority as
+  // ConversionEvent.agency. Null when unknown. Included in the group key.
+  agency        String?
   computedAt    DateTime @default(now())
   installs      Int      @default(0)
   // Users anchored on a signup event (bi §6 acquisition-anchor rule) rather
@@ -867,8 +877,9 @@ model CohortSnapshot {
   // upsert-by-key. We rely on the growth-sync cron's delete-then-createMany
   // pattern (never an upsert keyed on this constraint) to stay collision-free
   // regardless — see src/app/api/cron/growth-sync/route.ts. Same caveat
-  // already applied to `appId` before this migration; `os` follows it.
-  @@unique([orgId, appId, cohortDate, channel, os])
+  // already applied to `appId` before this migration; `os` and `agency`
+  // follow it.
+  @@unique([orgId, appId, cohortDate, channel, os, agency])
   @@index([orgId, cohortDate])
 }
 

@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
   for (const org of orgs) {
     const rows = await prisma.conversionEvent.findMany({
       where: { orgId: org.id, occurredAt: { gte: cutoff } },
-      select: { eventName: true, occurredAt: true, userKey: true, channel: true, os: true, revenue: true, source: true },
+      select: { eventName: true, occurredAt: true, userKey: true, channel: true, os: true, agency: true, revenue: true, source: true },
     })
 
     const events: RawEvent[] = rows
@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
         userKey: r.userKey,
         channel: r.channel,
         os: r.os,
+        agency: r.agency,
         revenue: r.revenue,
         source: r.source,
       }))
@@ -137,6 +138,7 @@ export async function POST(req: NextRequest) {
           cohortDate: new Date(c.cohortDate + 'T00:00:00.000Z'),
           channel: c.channel,
           os: c.os,
+          agency: c.agency,
           installs: c.installs,
           signups: c.signups,
           activated: c.activated,

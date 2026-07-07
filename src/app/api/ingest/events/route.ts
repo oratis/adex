@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
       os: e.os ?? null,
       country: e.country ?? null,
       revenue: e.revenue ?? 0,
+      agency: e.agency ?? null,
       raw: JSON.stringify(e.raw ?? e),
     })),
     skipDuplicates: true,

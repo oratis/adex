@@ -13,14 +13,15 @@
  * a signup nor an eligible install cannot be placed in a cohort and is
  * ignored.
  *
- * Channel/os attribution: once a user is anchored, their channel and os are
- * NOT necessarily read off the anchor event. Install-based MMP attribution
- * (Adjust/AppsFlyer network + device signal) is more reliable than a signup's
+ * Channel/os/agency attribution: once a user is anchored, their channel, os,
+ * and agency are NOT necessarily read off the anchor event. Install-based MMP
+ * attribution (Adjust/AppsFlyer network + device signal + campaign-name parse,
+ * docs/growth/06-mmp-ingest.md §7) is more reliable than a signup's
  * self-reported UTM, so if the user has ANY eligible install event (same
- * installAuthority filter), its channel/os wins even when the anchor itself
- * is the signup. Only signup-anchored users with no install event at all fall
- * back to the signup's own channel/os (e.g. a pure web signup with no MMP
- * involved).
+ * installAuthority filter), its channel/os/agency wins even when the anchor
+ * itself is the signup. Only signup-anchored users with no install event at
+ * all fall back to the signup's own channel/os/agency (e.g. a pure web signup
+ * with no MMP involved).
  *
  * Revenue events from RevenueCat carry no channel of their own — they attach
  * to the user's acquisition channel via userKey. Events with no userKey
@@ -60,6 +61,8 @@ export interface RawEvent {
   channel: string | null
   /** ios | android | web, when known. */
   os?: string | null
+  /** Campaign-name-derived agency (bi §7), when known. */
+  agency?: string | null
   revenue: number
   /** ConversionEvent.source (ga4 | revenuecat | deeplink | adjust | backend). */
   source: string
@@ -69,6 +72,8 @@ export interface CohortRow {
   cohortDate: string // YYYY-MM-DD (UTC)
   channel: string
   os: string | null
+  /** Campaign-name-derived agency (bi §7), when known. */
+  agency: string | null
   installs: number
   signups: number
   activated: number
@@ -120,9 +125,10 @@ export function buildCohortSnapshots(
   }
 
   // 2. Reduce each user to a cohort contribution.
-  type Acc = Omit<CohortRow, 'cohortDate' | 'channel' | 'os' | 'ltvEstimate' | 'cac'>
+  type Acc = Omit<CohortRow, 'cohortDate' | 'channel' | 'os' | 'agency' | 'ltvEstimate' | 'cac'>
   const cohorts = new Map<string, Acc>()
-  const keyOf = (cohortDate: string, channel: string, os: string | null) => `${cohortDate}|${channel}|${os ?? ''}`
+  const keyOf = (cohortDate: string, channel: string, os: string | null, agency: string | null) =>
+    `${cohortDate}|${channel}|${os ?? ''}|${agency ?? ''}`
 
   for (const userEvents of byUser.values()) {
     const signupEvent = userEvents
@@ -142,8 +148,9 @@ export function buildCohortSnapshots(
     const attribution = installEvent ?? anchor
     const channel = attribution.channel || CHANNELS.ORGANIC
     const os = attribution.os ?? null
+    const agency = attribution.agency ?? null
 
-    const key = keyOf(cohortDate, channel, os)
+    const key = keyOf(cohortDate, channel, os, agency)
     let acc = cohorts.get(key)
     if (!acc) {
       acc = {
@@ -182,14 +189,16 @@ export function buildCohortSnapshots(
   // 3. Finalize: attach LTV + CAC.
   const rows: CohortRow[] = []
   for (const [key, acc] of cohorts) {
-    const [cohortDate, channel, osKey] = key.split('|')
+    const [cohortDate, channel, osKey, agencyKey] = key.split('|')
     const os = osKey === '' ? null : osKey
+    const agency = agencyKey === '' ? null : agencyKey
     const cohortSize = acc.installs + acc.signups
     const spend = opts.spendByCohort?.get(`${cohortDate}|${channel}`)
     rows.push({
       cohortDate,
       channel,
       os,
+      agency,
       ...acc,
       ltvEstimate: realizedLtv(acc.revenueToDate, cohortSize),
       cac: spend !== undefined && cohortSize > 0 ? spend / cohortSize : null,

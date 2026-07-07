@@ -62,6 +62,10 @@ export function parseIncomingEvent(raw: unknown): ConversionEventInput | null {
     os,
     country: str(r.country),
     revenue,
+    // agency (bi §7): the backend generally doesn't have one to send (Adjust's
+    // campaign-name parse is the primary source) — only trusted if explicitly
+    // provided, never inferred here.
+    agency: str(r.agency),
     raw,
   }
 }
