@@ -247,6 +247,56 @@ export const GUARDRAIL_SCHEMAS: GuardrailSchema[] = [
       },
     ],
   },
+  {
+    rule: 'pilot_budget_cap',
+    label: { en: 'Growth pilot spend cap', zh: '增长试点花费上限' },
+    description: {
+      en: 'Inert until pilotStartDate is set. Once set, blocks spend-increasing steps once cumulative org spend since that date reaches the auto-pause threshold (95% of capTotal).',
+      zh: '默认不生效，需先设置 pilotStartDate。设置后，一旦该日期以来的组织累计花费达到自动暂停阈值（capTotal 的 95%），即拦截所有会增加花费的操作。',
+    },
+    fields: [
+      {
+        name: 'pilotStartDate',
+        label: { en: 'Pilot start date', zh: '试点开始日期' },
+        hint: { en: 'ISO date, e.g. 2026-01-01. Leave unset to keep this rule inert.', zh: 'ISO 日期，如 2026-01-01。不填则此规则不生效。' },
+        type: { kind: 'string' },
+        default: '',
+      },
+      {
+        name: 'capTotal',
+        label: { en: 'Pilot cap total (USD)', zh: '试点总预算上限（USD）' },
+        hint: { en: 'default 5000', zh: '默认 5000' },
+        type: { kind: 'number', min: 1 },
+        default: 5000,
+      },
+    ],
+  },
+  {
+    rule: 'skan_maturity',
+    label: { en: 'Require SKAN data maturity', zh: 'SKAN 数据成熟度要求' },
+    description: {
+      en: 'For Meta/TikTok app_install campaigns (SKAN-attributed iOS), reject automated adjustments within 72h of launch, and reject learning-phase (≤7d) spend runaways beyond 2× daily cap.',
+      zh: '针对 Meta/TikTok app_install 广告系列（SKAN 归因 iOS），启动 72 小时内拒绝任何自动化调整；学习期（≤7 天）内花费超过日预算 2 倍时也拒绝。',
+    },
+    fields: [],
+  },
+  {
+    rule: 'tier_cac_ceiling',
+    label: { en: 'Cap bid/budget increases by tier CAC ceiling', zh: '按分层 CAC 上限限制加价/加预算' },
+    description: {
+      en: 'Reject bid/budget increases on a channel whose most recent CohortSnapshot CAC exceeds firstMonthNet × 5. No CohortSnapshot data → not blocked.',
+      zh: '当渠道最近一次 CohortSnapshot 的 CAC 超过 firstMonthNet × 5 时，拒绝该渠道的加价/加预算操作。无 CohortSnapshot 数据时不拦截。',
+    },
+    fields: [
+      {
+        name: 'firstMonthNet',
+        label: { en: 'First-month net revenue (USD)', zh: '首月净收入（USD）' },
+        hint: { en: 'default 8.5', zh: '默认 8.5' },
+        type: { kind: 'number', min: 0 },
+        default: 8.5,
+      },
+    ],
+  },
 ]
 
 export function getSchema(rule: string): GuardrailSchema | undefined {
