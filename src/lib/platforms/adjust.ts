@@ -1,3 +1,10 @@
+/**
+ * Legacy Report-only path: app-level daily aggregates (no channel dimension)
+ * into `Report` for /dashboard. Do NOT feed this into ConversionEvent — for
+ * cohort-grade ingestion (S2S callbacks, channel mapping, install-source
+ * authority) see docs/growth/06-mmp-ingest.md first; wiring Adjust into the
+ * growth pipeline without those prerequisites double-counts installs.
+ */
 export interface AdjustConfig {
   apiToken: string
   appToken: string
