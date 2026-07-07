@@ -7,7 +7,7 @@
 Three stacked PRs — **merge in order 1 → 2 → 3**:
 
 | PR | Scope | Branch |
-|---|---|---|
+| --- | --- | --- |
 | [#1](https://github.com/oratis/adex/pull/1) | Growth OS P18–P19 + loopback design language | `feat/growth-cuddler-pilot` → `main` |
 | [#2](https://github.com/oratis/adex/pull/2) | Creative Studio (物料 capability) | `feat/growth-creative-studio` → #1 |
 | [#3](https://github.com/oratis/adex/pull/3) | P21 Growth Agent | `feat/growth-agent-p21` → #2 |
@@ -21,7 +21,7 @@ Every decision/attribution/spec/validation module is pure + unit-tested under `s
 Each item's pure logic is done and covered by tests; what's left is wiring the credentialed call.
 
 | Seam | Decision layer ready | Needs |
-|---|---|---|
+| --- | --- | --- |
 | **Adapter app-install writes** — real `OUTCOME_APP_PROMOTION` / `APP_PROMOTION` createCampaign | `campaign-objective.ts` (resolve + validate) + launch-route gate | Meta/TikTok/Google sandbox creds; adapter `launchCampaign` app-promotion branch |
 | **Creative render** — variant → actual Seedance2/Seedream job → transcode/crop → platform push | `storyboard.ts`, `creative-specs.ts` (validate/needs_transcode), `studio/produce` (creates the Creative + prompt) | `SEEDANCE2_API_KEY` / Seedream; a transcode worker |
 | **GA4 event-level pull** | `ga4.ts` mapper + `ingest/events` push (the real-time path) | GA4 **BigQuery export** for user-level events (Data API is aggregate-only) — or rely on the push channel |
@@ -35,3 +35,14 @@ Each item's pure logic is done and covered by tests; what's left is wiring the c
 ## Suggested next milestone
 
 Once a platform sandbox + `SEEDANCE2_API_KEY` are available: wire the adapter app-install branch + the produce→render→push loop end-to-end against a test ad account — the first real $5K-pilot campaign created entirely inside Adex.
+
+## 2026-07-07 · fork contributions (PR #4–#7, stacked, merge in order)
+
+| PR | Scope | Key change |
+| --- | --- | --- |
+| [#4](https://github.com/oratis/adex/pull/4) | agent runtime | The four pilot disciplines wired as real guardrail evaluators; `executeApprovedDecision` re-checks guardrails at execution time (bypass closed); growth snapshot now rendered into the plan prompt |
+| [#5](https://github.com/oratis/adex/pull/5) | data ingest | Adjust S2S callback → ConversionEvent with single install-source authority (anti-double-count), `ADJUST_NETWORK_MAP` channel mapping, namespaced userKey |
+| [#6](https://github.com/oratis/adex/pull/6) | canon + BI | Signup-anchored cohorts (authority never filters signup), os/agency dims, D0/D7 revenue windows, spend injection (CAC no longer null), mature-window retention gating, `/api/growth/summary` + `/api/reports/breakdown`, dashboard BI view |
+| [#7](https://github.com/oratis/adex/pull/7) | attribution | Campaign-name canon (`agency-date-bid-os-regions-channel-...`) parsed into agency/bidStrategy/conversionGoal; funnel↔delivery join on `(date, os, platform, agency)` |
+
+Pipeline canon lives in [06-mmp-ingest.md](06-mmp-ingest.md) §6–§7. Ops prerequisites for live data: Adjust callback + `app_user_id` **callback parameter** (not partner parameter), backend pushes signup/payment with `source=backend`, campaign naming discipline from day one.
