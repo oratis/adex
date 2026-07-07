@@ -8,8 +8,9 @@
  * so a misconfigured callback never 500s the route.
  *
  * userKey (decision B, 06-mmp-ingest.md §2): prefer the RC `app_user_id`
- * transmitted as an Adjust partner parameter (customer must configure this in
- * their Adjust dashboard so it's forwarded on the callback). If absent, we
+ * transmitted as an Adjust callback parameter — NOT a partner parameter, those go
+ * to ad networks; callback params come back on raw-data callbacks (AF analogue:
+ * customer_user_id/CUID). Set via SDK after registration. If absent, we
  * fall back to `adjust:${adid}` — a namespaced id that intentionally does NOT
  * join with GA4 pseudo ids or RC app_user_ids. Cohort-level consequences of
  * that downgrade are documented in cohorts.ts / kpi-canon.ts.
@@ -33,7 +34,7 @@ export interface AdjustCallbackParams {
   /** unix seconds, as Adjust sends it. */
   created_at?: string
   country?: string
-  /** RC app_user_id transmitted as a partner parameter (decision B). */
+  /** RC app_user_id transmitted as a callback parameter (decision B). */
   app_user_id?: string
   /** Adjust standard placeholder — "ios" | "android" (native SDK installs). */
   os_name?: string
