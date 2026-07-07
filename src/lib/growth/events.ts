@@ -28,9 +28,20 @@ export const SOURCES = {
   REVENUECAT: 'revenuecat',
   DEEPLINK: 'deeplink',
   ADJUST: 'adjust',
+  // Server-originated events (e.g. our own backend emitting canonical events
+  // directly, bypassing GA4/MMP) — bi §6.
+  BACKEND: 'backend',
 } as const
 
 export type EventSource = (typeof SOURCES)[keyof typeof SOURCES]
+
+/** Canonical OS buckets (ConversionEvent.os / CohortSnapshot.os / Report.os). */
+export const OS_VALUES = ['ios', 'android', 'web'] as const
+export type Os = (typeof OS_VALUES)[number]
+
+export function isOs(v: unknown): v is Os {
+  return typeof v === 'string' && (OS_VALUES as readonly string[]).includes(v)
+}
 
 const REVENUE_EVENTS: Set<EventName> = new Set([
   EVENTS.SUBSCRIPTION_ACTIVATED,
@@ -55,6 +66,7 @@ export interface ConversionEventInput {
   utmSource?: string | null
   utmCampaign?: string | null
   channel?: Channel | null
+  os?: Os | null
   country?: string | null
   revenue?: number
   raw?: unknown

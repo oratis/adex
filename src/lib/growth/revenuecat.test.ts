@@ -51,3 +51,17 @@ describe('mapRevenueCatEvent', () => {
     expect(mapRevenueCatEvent({ event: {} })).toBeNull()
   })
 })
+
+describe('mapRevenueCatEvent — os from store (bi §6)', () => {
+  it('maps app_store → ios, play_store → android, stripe → web', () => {
+    expect(mapRevenueCatEvent(body({ type: 'RENEWAL', price: 5, store: 'app_store' }))?.os).toBe('ios')
+    expect(mapRevenueCatEvent(body({ type: 'RENEWAL', price: 5, store: 'play_store' }))?.os).toBe('android')
+    expect(mapRevenueCatEvent(body({ type: 'RENEWAL', price: 5, store: 'stripe' }))?.os).toBe('web')
+  })
+  it('leaves os null for stores we do not confidently map (e.g. amazon)', () => {
+    expect(mapRevenueCatEvent(body({ type: 'RENEWAL', price: 5, store: 'amazon' }))?.os).toBeNull()
+  })
+  it('leaves os null when store is absent', () => {
+    expect(mapRevenueCatEvent(body({ type: 'RENEWAL', price: 5 }))?.os).toBeNull()
+  })
+})

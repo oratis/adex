@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
-import { activationRate, retentionRate, subscriptionRate, realizedLtv, eCACStar } from '@/lib/growth/kpi-canon'
+import { activationRate, retentionRate, subscriptionRate, realizedLtv, eCACStar, isMatureForRetentionWindow } from '@/lib/growth/kpi-canon'
 import { isSkanChannel, type Channel } from '@/lib/growth/channels'
 import { evaluateChannel } from '@/lib/growth/pilot-gates'
 
@@ -25,25 +25,30 @@ export async function GET() {
 
   const snaps = await prisma.cohortSnapshot.findMany({ where: { orgId: org.id } })
 
-  type Agg = { installs: number; activated: number; d1: number; d7: number; trials: number; subscribers: number; revenue: number; spend: number; hasSpend: boolean }
+  // `installs` = total cohort size (install- + signup-anchored). d7Base is the
+  // maturity-gated D7 denominator (bi §6 D7-dilution fix) — see
+  // kpi-canon.isMatureForRetentionWindow.
+  type Agg = { installs: number; activated: number; d1: number; d1Base: number; d7: number; d7Base: number; trials: number; subscribers: number; revenue: number; spend: number; hasSpend: boolean }
   const byChannel = new Map<string, Agg>()
   for (const s of snaps) {
     let a = byChannel.get(s.channel)
-    if (!a) { a = { installs: 0, activated: 0, d1: 0, d7: 0, trials: 0, subscribers: 0, revenue: 0, spend: 0, hasSpend: false }; byChannel.set(s.channel, a) }
-    a.installs += s.installs
+    if (!a) { a = { installs: 0, activated: 0, d1: 0, d1Base: 0, d7: 0, d7Base: 0, trials: 0, subscribers: 0, revenue: 0, spend: 0, hasSpend: false }; byChannel.set(s.channel, a) }
+    const cohortSize = s.installs + s.signups
+    const cohortDateKey = s.cohortDate.toISOString().slice(0, 10)
+    a.installs += cohortSize
     a.activated += s.activated
-    a.d1 += s.d1Retained
-    a.d7 += s.d7Retained
+    if (isMatureForRetentionWindow(cohortDateKey, 1)) { a.d1 += s.d1Retained; a.d1Base += cohortSize }
+    if (isMatureForRetentionWindow(cohortDateKey, 7)) { a.d7 += s.d7Retained; a.d7Base += cohortSize }
     a.trials += s.trials
     a.subscribers += s.subscribers
     a.revenue += s.revenueToDate
-    if (s.cac !== null) { a.spend += s.cac * s.installs; a.hasSpend = true }
+    if (s.cac !== null) { a.spend += s.cac * cohortSize; a.hasSpend = true }
   }
 
   const channels = [...byChannel.entries()]
     .map(([channel, a]) => {
       const actRate = activationRate(a.activated, a.installs)
-      const d7Rate = retentionRate(a.d7, a.installs)
+      const d7Rate = retentionRate(a.d7, a.d7Base)
       const ecac = a.hasSpend ? eCACStar({ spend: a.spend, mediaSubsidyCost: 0, installs: a.installs }) : null
       // Gate runs on real payment signal (subscribers) + funnel proxies.
       const gate = evaluateChannel({
@@ -60,7 +65,7 @@ export async function GET() {
         skan: isSkanChannel(channel as Channel),
         installs: a.installs,
         activationRate: actRate,
-        d1Rate: retentionRate(a.d1, a.installs),
+        d1Rate: retentionRate(a.d1, a.d1Base),
         d7Rate,
         trials: a.trials,
         subscribers: a.subscribers,

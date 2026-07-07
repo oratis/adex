@@ -23,17 +23,21 @@ export async function GET() {
     take: 200,
   })
 
-  const rows = snaps.map((s) => ({
-    cohortDate: s.cohortDate.toISOString().slice(0, 10),
-    channel: s.channel,
-    installs: s.installs,
-    activationRate: activationRate(s.activated, s.installs),
-    d1Rate: retentionRate(s.d1Retained, s.installs),
-    d7Rate: retentionRate(s.d7Retained, s.installs),
-    subscribers: s.subscribers,
-    subscriptionRate: subscriptionRate(s.subscribers, s.installs),
-    ltv: realizedLtv(s.revenueToDate, s.installs),
-  }))
+  const rows = snaps.map((s) => {
+    const cohortSize = s.installs + s.signups
+    return {
+      cohortDate: s.cohortDate.toISOString().slice(0, 10),
+      channel: s.channel,
+      os: s.os,
+      installs: cohortSize,
+      activationRate: activationRate(s.activated, cohortSize),
+      d1Rate: retentionRate(s.d1Retained, cohortSize),
+      d7Rate: retentionRate(s.d7Retained, cohortSize),
+      subscribers: s.subscribers,
+      subscriptionRate: subscriptionRate(s.subscribers, cohortSize),
+      ltv: realizedLtv(s.revenueToDate, cohortSize),
+    }
+  })
 
   return NextResponse.json({ hasData: rows.length > 0, rows })
 }

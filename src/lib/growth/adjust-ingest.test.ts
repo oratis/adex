@@ -80,3 +80,17 @@ describe('mapAdjustCallback', () => {
     expect(r?.raw).toBe(params)
   })
 })
+
+describe('mapAdjustCallback — os (bi §6)', () => {
+  it('normalizes os_name=ios/android to our Os enum', () => {
+    expect(mapAdjustCallback({ activity_kind: 'install', created_at: createdAt, adid: 'x1', os_name: 'ios' })?.os).toBe('ios')
+    expect(mapAdjustCallback({ activity_kind: 'install', created_at: createdAt, adid: 'x1', os_name: 'iOS' })?.os).toBe('ios')
+    expect(mapAdjustCallback({ activity_kind: 'install', created_at: createdAt, adid: 'x1', os_name: 'android' })?.os).toBe('android')
+  })
+  it('falls back to device_type=web when os_name is absent', () => {
+    expect(mapAdjustCallback({ activity_kind: 'install', created_at: createdAt, adid: 'x1', device_type: 'web' })?.os).toBe('web')
+  })
+  it('is null when neither os_name nor a recognizable device_type is present', () => {
+    expect(mapAdjustCallback({ activity_kind: 'install', created_at: createdAt, adid: 'x1' })?.os).toBeNull()
+  })
+})

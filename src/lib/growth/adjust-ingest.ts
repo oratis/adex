@@ -17,7 +17,7 @@
  * Ref: docs/growth/06-mmp-ingest.md §1 hole 3, §2 decision B, §3
  */
 
-import { EVENTS, SOURCES, type ConversionEventInput, type EventName } from './events'
+import { EVENTS, SOURCES, type ConversionEventInput, type EventName, type Os } from './events'
 import { resolveAdjustChannel } from './channels'
 
 /** Adjust `event_token` → our canonical EventName. Unmapped tokens are dropped. */
@@ -34,7 +34,23 @@ export interface AdjustCallbackParams {
   country?: string
   /** RC app_user_id transmitted as a partner parameter (decision B). */
   app_user_id?: string
+  /** Adjust standard placeholder — "ios" | "android" (native SDK installs). */
+  os_name?: string
+  /** Adjust standard placeholder — used here only to catch web-SDK installs
+   * that report a device_type of "web" instead of an os_name. */
+  device_type?: string
   [key: string]: string | undefined
+}
+
+/** Normalize Adjust's `os_name`/`device_type` placeholders to our Os enum. */
+function normalizeAdjustOs(params: AdjustCallbackParams): Os | null {
+  const osName = params.os_name?.trim().toLowerCase()
+  if (osName === 'ios') return 'ios'
+  if (osName === 'android') return 'android'
+  if (osName === 'web') return 'web'
+  const deviceType = params.device_type?.trim().toLowerCase()
+  if (deviceType === 'web') return 'web'
+  return null
 }
 
 /**
@@ -73,6 +89,7 @@ export function mapAdjustCallback(
     userKey,
     utmCampaign: params.campaign_name ?? null,
     channel,
+    os: normalizeAdjustOs(params),
     country: params.country ?? null,
     revenue: 0,
     raw: params,

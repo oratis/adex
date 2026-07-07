@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
         occurredAt: mapped.occurredAt,
         userKey: mapped.userKey ?? null,
         channel: mapped.channel ?? null,
+        os: mapped.os ?? null,
         country: mapped.country ?? null,
         revenue: mapped.revenue ?? 0,
         raw: JSON.stringify(mapped.raw ?? payload),

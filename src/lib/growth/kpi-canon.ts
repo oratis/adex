@@ -79,6 +79,30 @@ export function costPerPayingUser(spend: number, payingUsers: number): number | 
   return costPer(spend, payingUsers)
 }
 
+/** Cost per signup = spend / signups (null if no signups). bi §6 summary view. */
+export function costPerSignup(spend: number, signups: number): number | null {
+  return costPer(spend, signups)
+}
+
+/**
+ * ROI = revenue / spend for a given window (D0/D7). Null when spend is 0 —
+ * "infinite ROI on zero spend" is undefined, not a real number. bi §6.
+ */
+export function roi(revenue: number, spend: number): number | null {
+  if (spend <= 0) return null
+  return revenue / spend
+}
+
+/** ARPU = revenue / cohortSize over a window (e.g. 7-day). 0 when cohortSize is 0. */
+export function arpu(revenue: number, cohortSize: number): number {
+  return rate(revenue, cohortSize)
+}
+
+/** ARPPU = revenue / payingUsers over a window. 0 when there are no paying users. */
+export function arppu(revenue: number, payingUsers: number): number {
+  return rate(revenue, payingUsers)
+}
+
 /**
  * KOL effective CPI = cost / uplift installs. Uplift = installs above the
  * pre-publish baseline (hakko-kol-agent natural-uplift method). `costUsd`
@@ -104,9 +128,34 @@ export function activationRate(activated: number, installs: number): number {
  * Retention rate = retained / cohortSize. Retained is measured on the calendar
  * day cohortDate + N (D1 → +1, D7 → +7), GA4 definition — a returning-session
  * count, not a rolling window. PRD targets: D1 ≥30%, D7 ≥18%.
+ *
+ * Callers aggregating multiple cohorts MUST pre-filter with
+ * `isMatureForRetentionWindow` before summing into `cohortSize` — an
+ * immature cohort (whose cohortDate+N hasn't happened yet) has a
+ * structural, not real, zero for D_N and dilutes the rate if counted in the
+ * denominator (bi §6 "D7 dilution" fix).
  */
 export function retentionRate(retained: number, cohortSize: number): number {
   return rate(retained, cohortSize)
+}
+
+/**
+ * True when a cohort's D_N retention window has fully elapsed as of `now` —
+ * i.e. cohortDate + days (UTC midnight) has already passed. Cohorts that
+ * haven't reached that boundary yet have a structurally-zero D_N (not enough
+ * time to retain), so read-side aggregations must exclude them from both the
+ * numerator and denominator of a D_N rate rather than counting them as
+ * "not retained" — otherwise the rate is diluted by cohorts that are simply
+ * too young. (bi §6, docs/growth/06-mmp-ingest.md §6.)
+ *
+ * @param cohortDate 'YYYY-MM-DD' (UTC) acquisition day.
+ * @param days retention horizon (1 for D1, 7 for D7).
+ */
+export function isMatureForRetentionWindow(cohortDate: string, days: number, now: Date = new Date()): boolean {
+  const cohortStart = Date.parse(cohortDate + 'T00:00:00.000Z')
+  if (!Number.isFinite(cohortStart)) return false
+  const matureAt = cohortStart + days * 86_400_000
+  return now.getTime() >= matureAt
 }
 
 /** Subscription rate = subscribers / installs. PRD target ≥2% within 90d. */

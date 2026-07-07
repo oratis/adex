@@ -81,6 +81,7 @@ async function handle(req: NextRequest) {
         userKey: mapped.userKey ?? null,
         utmCampaign: mapped.utmCampaign ?? null,
         channel: mapped.channel ?? null,
+        os: mapped.os ?? null,
         country: mapped.country ?? null,
         revenue: mapped.revenue ?? 0,
         raw: JSON.stringify(mapped.raw ?? params),

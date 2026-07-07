@@ -4,7 +4,7 @@
  * a request. Unknown event names / sources are dropped, not trusted.
  */
 
-import { EVENTS, SOURCES, type ConversionEventInput, type EventName, type EventSource } from './events'
+import { EVENTS, SOURCES, isOs, type ConversionEventInput, type EventName, type EventSource, type Os } from './events'
 import { resolveChannel, isChannel, type Channel } from './channels'
 
 const EVENT_SET = new Set<string>(Object.values(EVENTS))
@@ -48,6 +48,9 @@ export function parseIncomingEvent(raw: unknown): ConversionEventInput | null {
 
   const revenue = typeof r.revenue === 'number' && Number.isFinite(r.revenue) ? r.revenue : 0
 
+  const rawOs = str(r.os)
+  const os: Os | null = rawOs && isOs(rawOs) ? rawOs : null
+
   return {
     source: source as EventSource,
     eventName: eventName as EventName,
@@ -56,6 +59,7 @@ export function parseIncomingEvent(raw: unknown): ConversionEventInput | null {
     utmSource,
     utmCampaign: str(r.utmCampaign),
     channel,
+    os,
     country: str(r.country),
     revenue,
     raw,

@@ -6,7 +6,7 @@ import { CHANNELS } from './channels'
 const D = (iso: string) => new Date(iso)
 
 function ev(p: Partial<RawEvent> & Pick<RawEvent, 'eventName' | 'occurredAt'>): RawEvent {
-  return { userKey: 'u1', channel: null, revenue: 0, source: 'ga4', ...p }
+  return { userKey: 'u1', channel: null, os: null, revenue: 0, source: 'ga4', ...p }
 }
 
 describe('dayKey', () => {
@@ -113,6 +113,59 @@ describe('buildCohortSnapshots', () => {
     const rows = buildCohortSnapshots(events, { installAuthority: 'adjust' })
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ installs: 1, channel: CHANNELS.PAID_ASA })
+  })
+
+  it('bi §6: signup anchors the cohort even when installAuthority would have excluded it as install-source noise', () => {
+    // A GA4 signup — installAuthority='adjust' would exclude a GA4 INSTALL,
+    // but signup is never authority-filtered.
+    const rows = buildCohortSnapshots(
+      [ev({ userKey: 'a', eventName: EVENTS.SIGNUP, occurredAt: D('2026-07-01T10:00:00Z'), source: 'ga4', channel: CHANNELS.ORGANIC })],
+      { installAuthority: 'adjust' },
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ cohortDate: '2026-07-01', signups: 1, installs: 0 })
+  })
+
+  it('bi §6: install-based MMP attribution overrides the signup event\'s own channel', () => {
+    const rows = buildCohortSnapshots([
+      ev({ userKey: 'a', eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T08:00:00Z'), channel: CHANNELS.PAID_ASA, source: 'adjust' }),
+      ev({ userKey: 'a', eventName: EVENTS.SIGNUP, occurredAt: D('2026-07-01T10:00:00Z'), channel: CHANNELS.ORGANIC, source: 'ga4' }),
+    ])
+    expect(rows).toHaveLength(1)
+    // Anchored on the signup day, but channel comes from the install.
+    expect(rows[0]).toMatchObject({ cohortDate: '2026-07-01', channel: CHANNELS.PAID_ASA, signups: 1, installs: 0 })
+  })
+
+  it('bi §6: a pure web signup with no install event falls back to its own channel/os', () => {
+    const rows = buildCohortSnapshots([
+      ev({ userKey: 'a', eventName: EVENTS.SIGNUP, occurredAt: D('2026-07-01T10:00:00Z'), channel: CHANNELS.PAID_META_WEB, os: 'web' }),
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ channel: CHANNELS.PAID_META_WEB, os: 'web', signups: 1, installs: 0 })
+  })
+
+  it('bi §6: os groups separately even for the same date/channel', () => {
+    const rows = buildCohortSnapshots([
+      ev({ userKey: 'a', eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T08:00:00Z'), channel: CHANNELS.PAID_ASA, os: 'ios' }),
+      ev({ userKey: 'b', eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T09:00:00Z'), channel: CHANNELS.PAID_ASA, os: 'android' }),
+    ])
+    expect(rows).toHaveLength(2)
+    expect(rows.map((r) => r.os).sort()).toEqual(['android', 'ios'])
+  })
+
+  it('bi §6: revenueD0/revenueD7 window boundaries around the cohort anchor day', () => {
+    const rows = buildCohortSnapshots([
+      ev({ userKey: 'a', eventName: EVENTS.INSTALL, occurredAt: D('2026-07-01T08:00:00Z'), channel: CHANNELS.PAID_ASA }),
+      // D0: same calendar day as the anchor.
+      ev({ userKey: 'a', eventName: EVENTS.SUBSCRIPTION_ACTIVATED, occurredAt: D('2026-07-01T20:00:00Z'), revenue: 5 }),
+      // Within the D7 window (cohortDate + 7) but after D0.
+      ev({ userKey: 'a', eventName: EVENTS.SUBSCRIPTION_ACTIVATED, occurredAt: D('2026-07-08T00:00:00Z'), revenue: 3 }),
+      // Outside the D7 window (cohortDate + 8).
+      ev({ userKey: 'a', eventName: EVENTS.SUBSCRIPTION_ACTIVATED, occurredAt: D('2026-07-09T00:00:00Z'), revenue: 7 }),
+    ])
+    expect(rows[0].revenueD0).toBeCloseTo(5)
+    expect(rows[0].revenueD7).toBeCloseTo(8) // 5 + 3, not the 7 on day+8
+    expect(rows[0].revenueToDate).toBeCloseTo(15) // unbounded total includes all three
   })
 
   it('installAuthority never filters funnel-deep/revenue events, only acquisition events', () => {
