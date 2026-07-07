@@ -14,6 +14,15 @@
  * on cohortDay+N. Documented as a proxy — a dedicated GA4 retention signal can
  * refine it later without changing this contract.
  *
+ * Single install-source authority (decision A, docs/growth/06-mmp-ingest.md §2):
+ * when an org has both GA4 and Adjust wired, `opts.installAuthority` restricts
+ * which ACQUISITION-class event source counts toward a user's cohort placement
+ * — otherwise the same real install lands twice (once per source, under two
+ * different userKey namespaces) and installs double-count. Funnel-deep
+ * (first_chat/scene_generated) and revenue events are never filtered by
+ * source — Adjust doesn't report those at all, so filtering them would zero
+ * out activation/retention for MMP-attributed cohorts.
+ *
  * Ref: docs/growth/00-cuddler-first-redesign.md §4.1 · kpi-canon.realizedLtv
  */
 
@@ -27,6 +36,8 @@ export interface RawEvent {
   userKey: string | null
   channel: string | null
   revenue: number
+  /** ConversionEvent.source (ga4 | revenuecat | deeplink | adjust). */
+  source: string
 }
 
 export interface CohortRow {
@@ -61,10 +72,13 @@ function dayDiff(fromKey: string, to: Date): number {
 /**
  * Build cohort rows from a user's full event set. `spendByCohort` optionally
  * supplies media spend keyed by `${cohortDate}|${channel}` to compute CAC.
+ * `installAuthority`, if set, restricts which source's ACQUISITION-class
+ * events (install/signup) count toward cohort placement — see the
+ * single-install-source-authority note above the module doc comment.
  */
 export function buildCohortSnapshots(
   events: RawEvent[],
-  opts: { spendByCohort?: Map<string, number> } = {},
+  opts: { spendByCohort?: Map<string, number>; installAuthority?: string } = {},
 ): CohortRow[] {
   // 1. Group events by user.
   const byUser = new Map<string, RawEvent[]>()
@@ -82,7 +96,7 @@ export function buildCohortSnapshots(
 
   for (const userEvents of byUser.values()) {
     const acquisition = userEvents
-      .filter((e) => ACQUISITION.has(e.eventName))
+      .filter((e) => ACQUISITION.has(e.eventName) && (!opts.installAuthority || e.source === opts.installAuthority))
       .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime())[0]
     if (!acquisition) continue // no install/signup → can't place in a cohort
 

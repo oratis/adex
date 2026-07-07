@@ -179,3 +179,61 @@ export function kFactor(
     confidence: attributionReady ? 'measured' : 'estimated',
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Install authority — decision A (docs/growth/06-mmp-ingest.md §2)
+// ─────────────────────────────────────────────────────────────────────────
+
+export type InstallAuthority = 'adjust' | 'ga4'
+
+export interface InstallAuthorityResult {
+  authority: InstallAuthority
+  /** True when we deviated from the configured authority (anti-zeroing guard). */
+  fallback: boolean
+  /** Present only when `fallback` is true — surface it in cron logs / responses. */
+  warning?: string
+}
+
+/**
+ * Resolve which source is authoritative for INSTALL-class events in a
+ * ConversionEvent aggregation window.
+ *
+ * Rule (decision A): if the org has a configured Adjust `PlatformAuth`, Adjust
+ * is the install/channel authority and GA4 is demoted to funnel-deep events
+ * only (first_chat, scene_generated, ...) that Adjust doesn't report.
+ * Orgs with no Adjust integration keep GA4 as the (only) install source.
+ * This function is pure — callers do the `PlatformAuth` lookup and the
+ * per-source install counts (e.g. the growth-sync cron) and pass in
+ * primitives.
+ *
+ * Anti-zeroing guard: an org can have an Adjust `PlatformAuth` row for the
+ * legacy Report pull (`src/lib/platforms/adjust.ts`, `reports/sync`) without
+ * ever wiring the S2S callback route (`/api/ingest/adjust`) that actually
+ * populates ConversionEvent. If that happens, naively trusting "Adjust
+ * configured → Adjust authoritative" reports installs=0 for the whole window
+ * while GA4 still has real signal — a false funnel zero-out, not a real drop.
+ * When the resolved authority's window install count is 0 but the other
+ * source's count is > 0, we fall back to the other source and set
+ * `fallback: true` with a `warning` string so callers can log/surface it
+ * instead of silently reporting installs=0.
+ */
+export function resolveInstallAuthority(params: {
+  hasAdjustAuth: boolean
+  adjustInstallCount: number
+  ga4InstallCount: number
+}): InstallAuthorityResult {
+  const { hasAdjustAuth, adjustInstallCount, ga4InstallCount } = params
+  const preferred: InstallAuthority = hasAdjustAuth ? 'adjust' : 'ga4'
+  const other: InstallAuthority = preferred === 'adjust' ? 'ga4' : 'adjust'
+  const preferredCount = preferred === 'adjust' ? adjustInstallCount : ga4InstallCount
+  const otherCount = other === 'adjust' ? adjustInstallCount : ga4InstallCount
+
+  if (preferredCount === 0 && otherCount > 0) {
+    return {
+      authority: other,
+      fallback: true,
+      warning: `install authority '${preferred}' had 0 installs in the window while '${other}' had ${otherCount} — falling back to '${other}' to avoid a false zero (check whether /api/ingest/adjust is actually wired for this org)`,
+    }
+  }
+  return { authority: preferred, fallback: false }
+}
