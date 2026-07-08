@@ -28,21 +28,63 @@ export interface Seedance2TaskRequest {
   watermark?: boolean
 }
 
+/**
+ * Ark task response for doubao-seedance-2-0.
+ *
+ * IMPORTANT: the response shape differs from {@link Seedance2TaskRequest}.
+ * On success the video URL lives at `content.video_url` — an OBJECT, not the
+ * request's `content` array — and `duration` / `resolution` / `ratio` are
+ * top-level fields. `usage.completion_tokens` is the billed token count.
+ * Ark does NOT return an `output` object; it is retained here only as a
+ * defensive fallback for proxy/aggregator endpoints that reshape the payload.
+ */
 export interface Seedance2TaskResponse {
   id: string
   model: string
-  content: ContentItem[]
   status: 'queued' | 'running' | 'succeeded' | 'failed'
+  content?: { video_url?: string } | null
   error?: { code: string; message: string }
-  output?: {
-    video_url?: string
-    duration?: number
-  }
-  usage?: {
-    duration?: number
-  }
+  usage?: { completion_tokens?: number }
+  seed?: number
+  resolution?: string
+  ratio?: string
+  duration?: number
+  framespersecond?: number
+  generate_audio?: boolean
   created_at: number
   updated_at: number
+  /** Defensive fallback only — the real Ark API returns `content.video_url`. */
+  output?: { video_url?: string }
+}
+
+/**
+ * Map an Ark task response to the Asset fields that should be written.
+ * Returns an empty object when nothing should change yet (e.g. a succeeded
+ * task whose video URL has not been attached — the caller keeps polling).
+ *
+ * The succeeded response carries the URL at `content.video_url` and the
+ * duration at the top level; `output.video_url` is only a defensive fallback
+ * for reshaping proxies. This is the render seam that previously dropped
+ * finished videos by reading `output.video_url`, which Ark never returns.
+ */
+export function assetUpdateFromTask(
+  task: Seedance2TaskResponse
+): Record<string, unknown> {
+  const updateData: Record<string, unknown> = {}
+  const videoUrl = task.content?.video_url ?? task.output?.video_url
+
+  if (task.status === 'succeeded' && videoUrl) {
+    updateData.status = 'ready'
+    updateData.fileUrl = videoUrl
+    if (task.duration) updateData.duration = task.duration
+  } else if (task.status === 'failed') {
+    updateData.status = 'failed'
+    updateData.errorMessage = task.error?.message || 'Generation failed'
+  } else if (task.status === 'running' || task.status === 'queued') {
+    updateData.status = 'generating'
+  }
+
+  return updateData
 }
 
 export class Seedance2Client {
