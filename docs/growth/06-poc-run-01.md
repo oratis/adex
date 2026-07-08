@@ -2,6 +2,8 @@
 
 > 2026-07-08 · 配套 [06-competitor-intel-remix.md](06-competitor-intel-remix.md) 的 Phase 0 手工 PoC 首跑
 > 目的:用**真实**竞品素材走通"竞品情报抽取 → 借结构不复刻的 Remix → Seedance2 生成 → 审核门"全链路,零新基建。
+>
+> **状态(2026-07-09)· 全部 SHIPPED**:PR #8(render-seam 修复)+ #9(ingest pipeline)+ #10(remix 引擎 + `/api/creatives/remix` 合龙)已并入 main `99ec51d`;生产已上线 Cloud Run **rev adex-00040**,冒烟绿(`/login` 200、新路由 404→401/400、`migrate deploy` 生效)。取数走 **Approach B**(无官方 API)。
 
 ## 结论(先看)
 
@@ -127,7 +129,7 @@
 - [src/app/api/seedance2/status/route.ts:36](../../src/app/api/seedance2/status/route.ts) — `if (task.status === 'succeeded' && task.output?.video_url)` **永远为 false** → 不置 `ready`、不写 `fileUrl`。
 - [src/lib/platforms/seedance2.ts:31](../../src/lib/platforms/seedance2.ts) — `Seedance2TaskResponse` 类型也错:声明 `output?: {video_url}`,且 `content: ContentItem[]`(数组),但 succeeded 响应的 `content` 是 `{video_url}` 对象。
 
-**建议修法**(未改,待确认):`content.video_url ?? output?.video_url` 兼容读取,`duration` 读顶层;同步修 `Seedance2TaskResponse` 类型;补一条 e2e。这条链路是 P20 Creative Studio 出片 + P22 Remix 共用的关键 seam,值得单独修一版。
+**已修复(PR #8 合入 main + 部署 rev 40)**:`content.video_url ?? output?.video_url` 兼容读取(抽成 `assetUpdateFromTask`),`duration` 读顶层;同步修 `Seedance2TaskResponse` 类型;加了 `e2e/seedance2-status.spec.ts` 回归。这条链路是 P20 Creative Studio 出片 + P22 Remix 共用的关键 seam。
 
 **就绪脚本**:`remix_generate.mjs`(scratchpad,`KEY`/`BASE_URL`/`MODEL` 走环境变量)—— 复刻仓库 Ark 形状 + 正确的 `content.video_url` 读取,可作修 seam 时的参照。
 
@@ -192,7 +194,7 @@
 
 **验证**:`vitest` 8/8 ✅ · `tsc --noEmit` 0 error ✅(需先 `npx prisma generate`)· `eslint` 干净 ✅。
 
-**还差的接线**(等那两版落地后再做,避免串):`POST /api/creatives/remix`(`CompetitorCreative` → `buildRemixBrief` → `remixBriefToSeedanceRequest` → Seedance2 → `Creative(reviewStatus:'pending')`)。三条工作流到时正好合龙:ingest 供料 → remix-brief 出脑 → render-seam 出片 → 审核门。
+**接线已完成(PR #10 合入 main + 上线 rev 40)**:`POST/GET /api/creatives/remix`(`CompetitorCreative` → `competitorCreativeToAnalysis` → `buildRemixBrief` → `remixBriefToSeedanceRequest` → Seedance2 → `Creative(reviewStatus:'pending')`;GET 轮询完成后把 fileUrl 回填到 Creative)。三条工作流已合龙上线:ingest 供料 → remix-brief 出脑 → render-seam 出片 → 审核门。
 
 ## 10. 探索 —— 竞品媒体下载 → 存 Adex 服务器?
 
