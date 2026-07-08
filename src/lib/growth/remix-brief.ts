@@ -271,6 +271,41 @@ export function remixBriefToSeedanceRequest(brief: RemixBrief, name?: string) {
   }
 }
 
+/** Structural shape of a persisted CompetitorCreative row (Prisma `Json` fields arrive as `unknown`). */
+export interface CompetitorCreativeRow {
+  externalId: string
+  appName?: string | null
+  adFormat?: string | null
+  ratio?: string | null
+  duration?: number | null
+  creativeTags?: unknown
+  sellingPoints?: unknown
+  emotionalTriggers?: unknown
+  screenUnderstanding?: unknown
+}
+
+/**
+ * Map a persisted CompetitorCreative row → CompetitorAnalysis for the remix.
+ * Decoupled from Prisma (structural input); coerces JSON fields to string[] and
+ * an unknown ratio to null. `screenUnderstanding` is carried only as the
+ * anti-reference — `buildRemixBrief` never reproduces it.
+ */
+export function competitorCreativeToAnalysis(row: CompetitorCreativeRow): CompetitorAnalysis {
+  return {
+    externalId: row.externalId,
+    app: row.appName ?? null,
+    headline: null,
+    ratio: coerceRatio(row.ratio),
+    durationSec: typeof row.duration === 'number' ? row.duration : null,
+    format: row.adFormat ?? null,
+    creativeTags: cleanList(row.creativeTags),
+    sellingPoints: cleanList(row.sellingPoints),
+    emotionalTriggers: cleanList(row.emotionalTriggers),
+    screenUnderstanding: cleanList(row.screenUnderstanding),
+    audienceProfile: null,
+  }
+}
+
 /** Parse an inbound competitor-analysis payload; returns null if it lacks an externalId. */
 export function parseCompetitorAnalysis(raw: unknown): CompetitorAnalysis | null {
   if (!raw || typeof raw !== 'object') return null

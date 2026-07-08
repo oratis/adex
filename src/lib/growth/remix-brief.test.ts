@@ -3,6 +3,7 @@ import {
   deterministicRemixBrief,
   remixBriefToSeedanceRequest,
   parseCompetitorAnalysis,
+  competitorCreativeToAnalysis,
   type CompetitorAnalysis,
   type ProductBrief,
 } from './remix-brief'
@@ -70,6 +71,39 @@ describe('deterministicRemixBrief', () => {
     const b = deterministicRemixBrief({ externalId: 'x' }, cuddler)
     expect(b.ratio).toBe('9:16')
     expect(b.durationSec).toBe(8)
+  })
+})
+
+describe('competitorCreativeToAnalysis', () => {
+  it('maps a persisted row (appName→app, adFormat→format) and coerces JSON arrays', () => {
+    const a = competitorCreativeToAnalysis({
+      externalId: 'talkie-202',
+      appName: 'Talkie',
+      adFormat: 'Vertical Video 720x1280 (9:16), Rewarded',
+      ratio: '9:16',
+      duration: 8,
+      sellingPoints: ['Genuine interaction', 'Social sharing'],
+      screenUnderstanding: ['Talkie brand logo'],
+    })
+    expect(a.app).toBe('Talkie')
+    expect(a.format).toBe('Vertical Video 720x1280 (9:16), Rewarded')
+    expect(a.ratio).toBe('9:16')
+    expect(a.durationSec).toBe(8)
+    expect(a.sellingPoints).toEqual(['Genuine interaction', 'Social sharing'])
+    expect(a.screenUnderstanding).toEqual(['Talkie brand logo'])
+  })
+  it('coerces an unknown ratio to null and tolerates missing/odd JSON fields', () => {
+    const a = competitorCreativeToAnalysis({ externalId: 'e', ratio: '2:1', creativeTags: 'not-an-array' })
+    expect(a.ratio).toBeNull()
+    expect(a.creativeTags).toEqual([])
+    expect(a.app).toBeNull()
+  })
+  it('feeds the remix so it still never leaks competitor IP', () => {
+    const a = competitorCreativeToAnalysis({ externalId: 'x', appName: 'Talkie', screenUnderstanding: ['Talkie brand logo'] })
+    const brief = deterministicRemixBrief(a, {
+      product: 'Cuddler', positioning: 'always there', audience: 'x', artDirection: 'cozy', cta: 'go',
+    })
+    expect(brief.seedance2Prompt).not.toContain('Talkie')
   })
 })
 
