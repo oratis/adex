@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { verifyHmac } from '@/lib/growth/ingest-auth'
 import { parseCompetitorBatch, type NormalizedCompetitor } from '@/lib/growth/competitor-import'
 import { uploadToGCS } from '@/lib/storage'
+import { VIDEO_MAX_BYTES } from '@/lib/growth/competitor-media'
 
 /**
  * POST /api/ingest/competitor?org=<orgId>
@@ -178,10 +179,13 @@ async function fetchMediaToAsset(orgId: string, row: NormalizedCompetitor): Prom
     const res = await fetch(url)
     if (!res.ok) return null
     const contentType = res.headers.get('content-type') || 'application/octet-stream'
+    const isVideo = contentType.startsWith('video')
+    // Bulk ingest is bounded: skip an over-cap video (by declared length) before we
+    // buffer it. Vetted winners above the cap go through POST /api/competitors/media.
+    if (isVideo && Number(res.headers.get('content-length') ?? 0) > VIDEO_MAX_BYTES) return null
     const buffer = Buffer.from(await res.arrayBuffer())
     if (buffer.length === 0) return null
-
-    const isVideo = contentType.startsWith('video')
+    if (isVideo && buffer.length > VIDEO_MAX_BYTES) return null
     // orgId + externalId are caller-supplied (HMAC-gated but still external) and
     // flow into the GCS object key — sanitize each segment so a hostile/malformed
     // value can't inject path separators or produce a broken public URL.
