@@ -979,3 +979,58 @@ model CreativeVariant {
   @@index([briefId])
   @@index([orgId])
 }
+
+// =====================================================================
+// Competitor intelligence (P22 Phase 1)
+// =====================================================================
+
+// A competitor ad creative captured from AppGrowing and cached in Adex.
+// Ingested via POST /api/ingest/competitor using the non-API "Approach B"
+// path (authenticated browser / Collections / plugin export) — NOT the
+// internal GraphQL scrape, which is ToS-risky (docs/growth/06-competitor-intel-remix.md
+// §5, Approach C). Two tiers arrive in one batch: cheap list-level
+// "discovery" rows (synthetic externalId, no AI Points) and on-demand
+// "enriched" rows carrying AppGrowing's cached per-creative AI analysis.
+// Read-only surface: GET /api/competitors. Non-destructive add (§4) — no
+// relation fields, so existing Organization/Asset models are untouched;
+// orgId/assetId are bare foreign keys.
+model CompetitorCreative {
+  id              String    @id @default(cuid())
+  orgId           String
+  source          String    @default("appgrowing") // capture source (appgrowing)
+  externalId      String                            // AppGrowing drawer id, or synthetic (app|headline|region|language) for discovery rows — idempotency key
+  // Relevance triage — the ingest filter drops/flags off-target keyword
+  // false-matches (§5); only kept rows are persisted, tagged with their tier.
+  relevance       String?                           // core | adjacent-* (off-target-* / FILTER-OUT-* are dropped at ingest)
+  // Hard metadata
+  appName         String?
+  advertiser      String?
+  mediaPlatforms  Json?                             // ["messenger","instagram","facebook",...]
+  adFormat        String?                           // e.g. "Vertical Video 720x1280 (9:16), Rewarded"
+  region          String?
+  language        String?
+  adDays          Int?                              // days in flight — evergreen / indirect-performance proxy
+  impressions     BigInt?                           // estimated impressions (can exceed Int range)
+  firstSeenAt     DateTime?
+  lastSeenAt      DateTime?
+  originalPostUrl String?                           // public original source (YouTube etc.)
+  ratio           String?                           // 9:16, 16:9, 1:1
+  duration        Int?                              // video duration, seconds
+  // AI-analysis layer — cached from AppGrowing (derive, don't copy: §3)
+  creativeTags        Json?
+  sellingPoints       Json?                         // core selling points
+  emotionalTriggers   Json?
+  screenUnderstanding Json?                         // primary visual elements
+  storyboard          Json?                         // per-shot extraction
+  transcript          String?                       // speech-to-text
+  bgm                 String?                       // recognition result only — never the audio (§6 R1)
+  aiPrompt            String?                       // AppGrowing-derived T2V prompt (Remix seed)
+  rawMeta             Json?                         // original ingested row, archived for provenance
+  // Link to our GCS-stored copy of the media (enriched rows only)
+  assetId         String?
+  ingestedAt      DateTime  @default(now())
+
+  @@unique([orgId, source, externalId])             // idempotency
+  @@index([orgId, appName])
+  @@index([orgId, relevance])
+}
