@@ -217,5 +217,5 @@
 
 **建议的分层存储策略**:
 - **Tier 1 缩略图/首帧海报**(~百KB,低风险):存 GCS 给竞品情报面板做预览 —— 合理必要。
-- **Tier 2 完整视频**(默认**不批量存**):仅对人工精选爆款、按 公开源 > 套餐内下载 优先级取;打 `source:'appgrowing'`+`sourceRef`,**仅内部参照**,不发布、不作生成参照。
+- **Tier 2 完整视频 ✅ 已法务通过 + 上线**(默认**不批量存**):`POST /api/competitors/media`(单条精选、传公开/套餐内 `sourceUrl`)→ `storeCompetitorMedia(allowVideo:true)` → GCS + `Asset(source:'appgrowing', tags:['tier2-video'])`,回填 `CompetitorCreative.assetId`;**50MB 上限 + SSRF 门 + `competitor.video_store` audit**;bulk ingest 同加尺寸上限。**仅内部参照,不发布、绝不作生成参照**(remix 恒 text2video)。
 - **不做**绕门禁批量抓 CDN;要规模化先升级到含 Unlimited Download 的套餐(官方许可)或走公开源,并过法务"内部参照存储"口径。

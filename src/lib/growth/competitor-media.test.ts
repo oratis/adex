@@ -3,7 +3,9 @@ import {
   extForContentType,
   competitorMediaKey,
   assertStorable,
+  isPublicHttpUrl,
   THUMBNAIL_MAX_BYTES,
+  VIDEO_MAX_BYTES,
 } from './competitor-media'
 
 describe('extForContentType', () => {
@@ -51,5 +53,29 @@ describe('assertStorable (Tier policy)', () => {
   it('allows video only when explicitly opted in and content-type is video', () => {
     expect(() => assertStorable('video', 'video/mp4', 5_000_000, true)).not.toThrow()
     expect(() => assertStorable('video', 'image/png', 1000, true)).toThrow(/video content-type/)
+  })
+  it('caps Tier-2 video size even when opted in (legal-cleared but bounded)', () => {
+    expect(() => assertStorable('video', 'video/mp4', VIDEO_MAX_BYTES + 1, true)).toThrow(/Tier-2 cap/)
+    expect(() => assertStorable('video', 'video/mp4', VIDEO_MAX_BYTES, true)).not.toThrow()
+  })
+})
+
+describe('isPublicHttpUrl (SSRF guard)', () => {
+  it('accepts public http(s) URLs', () => {
+    expect(isPublicHttpUrl('https://app-ag-global-esa.umcdn.cn/x.mp4?auth=1')).toBe(true)
+    expect(isPublicHttpUrl('https://www.youtube.com/watch?v=x')).toBe(true)
+  })
+  it('rejects non-http protocols and malformed URLs', () => {
+    expect(isPublicHttpUrl('file:///etc/passwd')).toBe(false)
+    expect(isPublicHttpUrl('ftp://host/x')).toBe(false)
+    expect(isPublicHttpUrl('not a url')).toBe(false)
+  })
+  it('blocks loopback, private ranges, and the GCP metadata host', () => {
+    for (const u of [
+      'http://localhost/x', 'http://127.0.0.1/x', 'http://10.0.0.5/x', 'http://192.168.1.1/x',
+      'http://169.254.169.254/x', 'http://172.16.0.1/x', 'http://metadata.google.internal/x',
+    ]) {
+      expect(isPublicHttpUrl(u)).toBe(false)
+    }
   })
 })

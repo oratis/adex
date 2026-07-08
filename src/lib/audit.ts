@@ -20,6 +20,8 @@ export type AuditAction =
   | 'creative.create'
   | 'creative.delete'
   | 'creative.attach'
+  // Competitor intel (Tier-2 full-video storage — IP-sensitive, logged for provenance)
+  | 'competitor.video_store'
   // Budgets
   | 'budget.create'
   | 'budget.update'

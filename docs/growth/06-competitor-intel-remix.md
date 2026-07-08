@@ -1,7 +1,7 @@
 # 竞品情报 + 物料 Remix — 完整调研方案 (P22)
 
 > Version v2 · 2026-07-09 · 作者调研:实地走查 AppGrowing Global 会员账号 + 通读 Adex 现有创意链路
-> **实施状态**:Phase 1(竞品入库)+ Phase 2(remix 引擎 + `/api/creatives/remix` 合龙)+ render-seam 修复 **已上线生产**(Cloud Run rev adex-00040;PR #8 / #9 / #10)。**取数走 Approach B**(套餐内 Collections / 浏览器插件导出 —— 无官方 API);Tier-2 完整视频转存待法务裁决。跑测详见 [06-poc-run-01.md](06-poc-run-01.md)。
+> **实施状态**:Phase 1(竞品入库)+ Phase 2(remix 引擎 + `/api/creatives/remix` 合龙)+ render-seam 修复 **已上线生产**(Cloud Run rev adex-00040;PR #8 / #9 / #10)。**取数走 Approach B**(套餐内 Collections / 浏览器插件导出 —— 无官方 API);**Tier-2 完整视频转存已法务通过并上线**(`POST /api/competitors/media`;50MB 上限 + SSRF 门 + `competitor.video_store` audit;仅内部参照、绝不作生成参照)。跑测详见 [06-poc-run-01.md](06-poc-run-01.md)。
 > 关联:[00-cuddler-first-redesign.md](00-cuddler-first-redesign.md) §6(Scene-as-Creative)· [03-creative-studio.md](03-creative-studio.md)(物料能力)· [04-status.md](04-status.md)(render seam 待补)
 > 目标:用 AppGrowing 会员账号,给 Adex 装上两件事 —
 >
