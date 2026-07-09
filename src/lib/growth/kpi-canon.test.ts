@@ -100,6 +100,13 @@ describe('resolveInstallAuthority — decision A + anti-zeroing guard', () => {
       resolveInstallAuthority({ hasAdjustAuth: false, adjustInstallCount: 0, ga4InstallCount: 50 }),
     ).toEqual({ authority: 'ga4', fallback: false })
   })
+  it('S2S-only org (no legacy credential, live adjust events) → Adjust is authority', () => {
+    // The recommended setup wires only the callback route — the legacy
+    // Report-API credential must not be a precondition for authority.
+    expect(
+      resolveInstallAuthority({ hasAdjustAuth: false, adjustInstallCount: 40, ga4InstallCount: 50 }),
+    ).toEqual({ authority: 'adjust', fallback: false })
+  })
   it('Adjust auth configured and reporting installs → Adjust is authority', () => {
     expect(
       resolveInstallAuthority({ hasAdjustAuth: true, adjustInstallCount: 40, ga4InstallCount: 50 }),

@@ -198,10 +198,15 @@ export interface InstallAuthorityResult {
  * Resolve which source is authoritative for INSTALL-class events in a
  * ConversionEvent aggregation window.
  *
- * Rule (decision A): if the org has a configured Adjust `PlatformAuth`, Adjust
- * is the install/channel authority and GA4 is demoted to funnel-deep events
- * only (first_chat, scene_generated, ...) that Adjust doesn't report.
- * Orgs with no Adjust integration keep GA4 as the (only) install source.
+ * Rule (decision A): an org is "on Adjust" when it has live `source='adjust'`
+ * install events in the window (the S2S pipeline signal) OR a configured
+ * Adjust `PlatformAuth` (the legacy Report-API credential, treated as a hint
+ * only). Either makes Adjust the install/channel authority, demoting GA4 to
+ * funnel-deep events (first_chat, scene_generated, ...) that Adjust doesn't
+ * report. The recommended setup is S2S-only with NO legacy credential — so
+ * the credential must never be a precondition, otherwise those orgs' channel-
+ * attributed installs are silently excluded whenever GA4 has any installs.
+ * Orgs with neither signal keep GA4 as the (only) install source.
  * This function is pure — callers do the `PlatformAuth` lookup and the
  * per-source install counts (e.g. the growth-sync cron) and pass in
  * primitives.
@@ -223,7 +228,7 @@ export function resolveInstallAuthority(params: {
   ga4InstallCount: number
 }): InstallAuthorityResult {
   const { hasAdjustAuth, adjustInstallCount, ga4InstallCount } = params
-  const preferred: InstallAuthority = hasAdjustAuth ? 'adjust' : 'ga4'
+  const preferred: InstallAuthority = hasAdjustAuth || adjustInstallCount > 0 ? 'adjust' : 'ga4'
   const other: InstallAuthority = preferred === 'adjust' ? 'ga4' : 'adjust'
   const preferredCount = preferred === 'adjust' ? adjustInstallCount : ga4InstallCount
   const otherCount = other === 'adjust' ? adjustInstallCount : ga4InstallCount
