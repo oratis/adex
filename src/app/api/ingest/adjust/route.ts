@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { verifyBearer, readBearer } from '@/lib/growth/ingest-auth'
-import { mapAdjustCallback, type AdjustCallbackParams } from '@/lib/growth/adjust-ingest'
+import { mapAdjustCallback, type AdjustCallbackParams, type AdjustEventTokenMap } from '@/lib/growth/adjust-ingest'
+import { EVENTS, type EventName } from '@/lib/growth/events'
+
+const EVENT_NAME_SET = new Set<string>(Object.values(EVENTS))
 
 /**
  * GET|POST /api/ingest/adjust?org=<orgId>&token=<secret>
@@ -45,7 +48,7 @@ async function handle(req: NextRequest) {
   // HMAC signatures for the events route. The same row's `extra` JSON also
   // carries the org's Adjust event-token map: {"eventTokenMap":{"abc123":"trial_start"}}.
   let expected: string | undefined = process.env.INGEST_ADJUST_SECRET
-  let eventTokenMap: Record<string, string> | undefined
+  let eventTokenMap: AdjustEventTokenMap | undefined
   try {
     const auth = await prisma.platformAuth.findUnique({
       where: { orgId_platform: { orgId, platform: 'ingest_adjust' } },
@@ -53,9 +56,17 @@ async function handle(req: NextRequest) {
     if (auth?.apiKey) expected = auth.apiKey
     if (auth?.extra) {
       try {
-        const extra = JSON.parse(auth.extra) as { eventTokenMap?: Record<string, string> }
+        const extra = JSON.parse(auth.extra) as { eventTokenMap?: Record<string, unknown> }
         if (extra.eventTokenMap && typeof extra.eventTokenMap === 'object') {
-          eventTokenMap = extra.eventTokenMap
+          // Only keep entries whose value is a canonical EventName — a typo'd
+          // config entry degrades to "token unmapped → dropped", never a bad row.
+          const validated: AdjustEventTokenMap = {}
+          for (const [token, name] of Object.entries(extra.eventTokenMap)) {
+            if (typeof name === 'string' && EVENT_NAME_SET.has(name)) {
+              validated[token] = name as EventName
+            }
+          }
+          eventTokenMap = validated
         }
       } catch {
         // malformed extra JSON — proceed without a map (installs still ingest)
