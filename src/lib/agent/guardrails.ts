@@ -341,8 +341,12 @@ const evaluators: Record<string, GuardrailEvaluator> = {
     const cfg = (config || {}) as { pilotStartDate?: string; capTotal?: number }
     if (!cfg.pilotStartDate) return { pass: true, rule: 'pilot_budget_cap' }
     const since = new Date(cfg.pilotStartDate)
+    // level:'account' — sync writes BOTH an account-level row (the contract,
+    // one per platform per day) AND best-effort per-campaign rows for the
+    // same spend (src/lib/sync/report-writer.ts). Summing all levels double-
+    // counts and trips the cap at ~half real spend.
     const reports = await prisma.report.findMany({
-      where: { orgId: ctx.orgId, date: { gte: since } },
+      where: { orgId: ctx.orgId, level: 'account', date: { gte: since } },
       select: { spend: true },
     })
     const cumulativeSpend = reports.reduce((s, r) => s + r.spend, 0)

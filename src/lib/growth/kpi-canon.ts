@@ -140,13 +140,18 @@ export function retentionRate(retained: number, cohortSize: number): number {
 }
 
 /**
- * True when a cohort's D_N retention window has fully elapsed as of `now` —
- * i.e. cohortDate + days (UTC midnight) has already passed. Cohorts that
- * haven't reached that boundary yet have a structurally-zero D_N (not enough
- * time to retain), so read-side aggregations must exclude them from both the
- * numerator and denominator of a D_N rate rather than counting them as
- * "not retained" — otherwise the rate is diluted by cohorts that are simply
- * too young. (bi §6, docs/growth/06-mmp-ingest.md §6.)
+ * True when a cohort's D_N retention window has fully elapsed as of `now`.
+ * Retention counts engagement across the WHOLE of calendar day
+ * cohortDate + N (`dayDiff === N` in cohorts.ts spans that day's full 24h),
+ * so the cohort is only final once day N has *ended* — i.e. at UTC midnight
+ * of cohortDate + N + 1, not at the first instant of day N. Gating at day
+ * N's start would fold cohorts into the D_N rate before that day's events
+ * could arrive — reintroducing, for a one-day band, the exact dilution this
+ * gate exists to fix. Cohorts that haven't reached the boundary have a
+ * structurally-zero D_N (not enough time to retain), so read-side
+ * aggregations must exclude them from both the numerator and denominator
+ * rather than counting them as "not retained".
+ * (bi §6, docs/growth/06-mmp-ingest.md §6.)
  *
  * @param cohortDate 'YYYY-MM-DD' (UTC) acquisition day.
  * @param days retention horizon (1 for D1, 7 for D7).
@@ -154,7 +159,7 @@ export function retentionRate(retained: number, cohortSize: number): number {
 export function isMatureForRetentionWindow(cohortDate: string, days: number, now: Date = new Date()): boolean {
   const cohortStart = Date.parse(cohortDate + 'T00:00:00.000Z')
   if (!Number.isFinite(cohortStart)) return false
-  const matureAt = cohortStart + days * 86_400_000
+  const matureAt = cohortStart + (days + 1) * 86_400_000
   return now.getTime() >= matureAt
 }
 
@@ -341,10 +346,15 @@ export interface InstallAuthorityResult {
  * Resolve which source is authoritative for INSTALL-class events in a
  * ConversionEvent aggregation window.
  *
- * Rule (decision A): if the org has a configured Adjust `PlatformAuth`, Adjust
- * is the install/channel authority and GA4 is demoted to funnel-deep events
- * only (first_chat, scene_generated, ...) that Adjust doesn't report.
- * Orgs with no Adjust integration keep GA4 as the (only) install source.
+ * Rule (decision A): an org is "on Adjust" when it has live `source='adjust'`
+ * install events in the window (the S2S pipeline signal) OR a configured
+ * Adjust `PlatformAuth` (the legacy Report-API credential, treated as a hint
+ * only). Either makes Adjust the install/channel authority, demoting GA4 to
+ * funnel-deep events (first_chat, scene_generated, ...) that Adjust doesn't
+ * report. The recommended setup is S2S-only with NO legacy credential — so
+ * the credential must never be a precondition, otherwise those orgs' channel-
+ * attributed installs are silently excluded whenever GA4 has any installs.
+ * Orgs with neither signal keep GA4 as the (only) install source.
  * This function is pure — callers do the `PlatformAuth` lookup and the
  * per-source install counts (e.g. the growth-sync cron) and pass in
  * primitives.
@@ -366,7 +376,7 @@ export function resolveInstallAuthority(params: {
   ga4InstallCount: number
 }): InstallAuthorityResult {
   const { hasAdjustAuth, adjustInstallCount, ga4InstallCount } = params
-  const preferred: InstallAuthority = hasAdjustAuth ? 'adjust' : 'ga4'
+  const preferred: InstallAuthority = hasAdjustAuth || adjustInstallCount > 0 ? 'adjust' : 'ga4'
   const other: InstallAuthority = preferred === 'adjust' ? 'ga4' : 'adjust'
   const preferredCount = preferred === 'adjust' ? adjustInstallCount : ga4InstallCount
   const otherCount = other === 'adjust' ? adjustInstallCount : ga4InstallCount

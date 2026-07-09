@@ -51,14 +51,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'invalid start/end date' }, { status: 400 })
   }
 
-  const date: { gte?: Date; lte?: Date } = {}
-  if (start) date.gte = start
+  // Server-side window guard: a request omitting start would otherwise scan
+  // every Report row the org has. Default to a rolling window ending at `end`
+  // (or now), mirroring growth-sync's WINDOW_DAYS — the UI always sends an
+  // explicit range, so this only bounds hand-crafted requests.
+  const WINDOW_DAYS = 60
+  const effectiveEnd = end ?? new Date()
+  const effectiveStart = start ?? new Date(effectiveEnd.getTime() - WINDOW_DAYS * 86_400_000)
+
+  const date: { gte?: Date; lte?: Date } = { gte: effectiveStart }
   if (end) date.lte = end
 
   const reports = await prisma.report.findMany({
     where: {
       orgId: org.id,
-      ...(start || end ? { date } : {}),
+      date,
       ...(osFilter ? { os: osFilter } : {}),
       ...(platformFilter ? { platform: platformFilter } : {}),
       ...(agencyFilter ? { agency: agencyFilter } : {}),
