@@ -129,6 +129,31 @@ describe('executeApprovedDecision — fresh guardrail re-check', () => {
     expect(execute).toHaveBeenCalled()
     expect(result.status).toBe('executed')
   })
+
+  it('persists the fresh guardrail report on the success path (warn signals survive)', async () => {
+    const execute = vi.fn(async () => ({ ok: true, output: {} }))
+    const tool = makeTool(execute)
+    mockedGetTool.mockReturnValue(tool)
+    const step = makeStep()
+    mockedPrisma.decision.findFirst.mockResolvedValue({
+      id: 'd1',
+      orgId: 'o1',
+      steps: [step],
+    })
+    const fresh = [{ pass: true, rule: 'pilot_budget_cap', reason: 'pilot spend 82% of cap: warn' }]
+    mockedEvaluateGuardrails.mockResolvedValue(fresh)
+
+    await executeApprovedDecision('o1', 'd1', 'autonomous')
+
+    expect(mockedPrisma.decisionStep.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'executed',
+          guardrailReport: JSON.stringify(fresh),
+        }),
+      })
+    )
+  })
 })
 
 describe('executeApprovedDecision — rollback exemption', () => {

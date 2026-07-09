@@ -273,6 +273,10 @@ export async function executeApprovedDecision(
         platformResponse: result.ok && result.platformResponse ? JSON.stringify(result.platformResponse) : null,
         platformLinkId: result.ok && result.platformLinkId ? result.platformLinkId : null,
         executedAt: new Date(),
+        // Persist the execution-time re-check on the success path too — warn-
+        // level signals (learning phase, 80%-of-cap) would otherwise be lost,
+        // leaving only the stale proposal-time report on the row.
+        guardrailReport: JSON.stringify(freshResults),
       },
     })
     if (!result.ok) anyFailed = true

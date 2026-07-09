@@ -259,6 +259,23 @@ describe('pilot_budget_cap', () => {
     expect(results.some((r) => r.rule === 'pilot_budget_cap' && !r.pass)).toBe(true)
   })
 
+  it('sums account-level rows only — campaign rows duplicate the same spend', async () => {
+    mockedPrisma.guardrail.findMany.mockResolvedValueOnce([
+      { rule: 'pilot_budget_cap', config: JSON.stringify({ pilotStartDate: '2026-01-01', capTotal: 5000 }) },
+    ])
+    mockedPrisma.report.findMany.mockResolvedValueOnce([{ spend: 1000 }])
+    await evaluateGuardrails({
+      orgId: 'o1',
+      step: { tool: 'resume_campaign', input: { campaignId: 'c1' } },
+      tool: tool('resume_campaign', 'low'),
+    })
+    expect(mockedPrisma.report.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ level: 'account' }),
+      })
+    )
+  })
+
   it('fail-closed: blocks if the DB read throws', async () => {
     mockedPrisma.guardrail.findMany.mockResolvedValueOnce([
       { rule: 'pilot_budget_cap', config: JSON.stringify({ pilotStartDate: '2026-01-01' }) },
