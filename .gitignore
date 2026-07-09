@@ -66,3 +66,8 @@ dev.db
 
 # Local Claude Code preview server config
 .claude/launch.json
+
+# Local-only design/reference docs — business material, never commit (see
+# ~/.claude data-handling rules). Keep such files out of the repo tree.
+docs/adex-google-ads-api-design-document.pdf
+docs/**/*.pdf
