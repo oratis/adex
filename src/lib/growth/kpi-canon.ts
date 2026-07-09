@@ -140,13 +140,18 @@ export function retentionRate(retained: number, cohortSize: number): number {
 }
 
 /**
- * True when a cohort's D_N retention window has fully elapsed as of `now` —
- * i.e. cohortDate + days (UTC midnight) has already passed. Cohorts that
- * haven't reached that boundary yet have a structurally-zero D_N (not enough
- * time to retain), so read-side aggregations must exclude them from both the
- * numerator and denominator of a D_N rate rather than counting them as
- * "not retained" — otherwise the rate is diluted by cohorts that are simply
- * too young. (bi §6, docs/growth/06-mmp-ingest.md §6.)
+ * True when a cohort's D_N retention window has fully elapsed as of `now`.
+ * Retention counts engagement across the WHOLE of calendar day
+ * cohortDate + N (`dayDiff === N` in cohorts.ts spans that day's full 24h),
+ * so the cohort is only final once day N has *ended* — i.e. at UTC midnight
+ * of cohortDate + N + 1, not at the first instant of day N. Gating at day
+ * N's start would fold cohorts into the D_N rate before that day's events
+ * could arrive — reintroducing, for a one-day band, the exact dilution this
+ * gate exists to fix. Cohorts that haven't reached the boundary have a
+ * structurally-zero D_N (not enough time to retain), so read-side
+ * aggregations must exclude them from both the numerator and denominator
+ * rather than counting them as "not retained".
+ * (bi §6, docs/growth/06-mmp-ingest.md §6.)
  *
  * @param cohortDate 'YYYY-MM-DD' (UTC) acquisition day.
  * @param days retention horizon (1 for D1, 7 for D7).
@@ -154,7 +159,7 @@ export function retentionRate(retained: number, cohortSize: number): number {
 export function isMatureForRetentionWindow(cohortDate: string, days: number, now: Date = new Date()): boolean {
   const cohortStart = Date.parse(cohortDate + 'T00:00:00.000Z')
   if (!Number.isFinite(cohortStart)) return false
-  const matureAt = cohortStart + days * 86_400_000
+  const matureAt = cohortStart + (days + 1) * 86_400_000
   return now.getTime() >= matureAt
 }
 

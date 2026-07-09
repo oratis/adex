@@ -136,15 +136,18 @@ describe('resolveInstallAuthority — decision A + anti-zeroing guard', () => {
 })
 
 describe('isMatureForRetentionWindow — bi §6 D7-dilution gate', () => {
-  it('is mature once cohortDate + N has passed', () => {
-    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-08T00:00:00.000Z'))).toBe(true)
-    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-08T00:00:00.001Z'))).toBe(true)
+  // Day N itself counts retention events across its full 24h (dayDiff === N),
+  // so maturity begins only when day N has ENDED: cohortDate + N + 1, UTC.
+  it('is mature once the whole of day cohortDate + N has elapsed', () => {
+    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-09T00:00:00.000Z'))).toBe(true)
+    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-09T00:00:00.001Z'))).toBe(true)
   })
-  it('is immature just before cohortDate + N', () => {
-    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-07T23:59:59.999Z'))).toBe(false)
+  it('is immature during day cohortDate + N — that day is still collecting events', () => {
+    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-08T00:00:00.000Z'))).toBe(false)
+    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-08T23:59:59.999Z'))).toBe(false)
   })
   it('D1 matures a day earlier than D7', () => {
-    const now = new Date('2026-07-02T00:00:00.000Z')
+    const now = new Date('2026-07-03T00:00:00.000Z')
     expect(isMatureForRetentionWindow('2026-07-01', 1, now)).toBe(true)
     expect(isMatureForRetentionWindow('2026-07-01', 7, now)).toBe(false)
   })
