@@ -21,6 +21,7 @@ const navItems: NavItem[] = [
   { href: '/assets',           key: 'nav.assets',           icon: '📂' },
   { href: '/creatives',        key: 'nav.creatives',        icon: '🎨' },
   { href: '/creatives/studio', key: 'nav.creative_studio',  icon: '🎛️' },
+  { href: '/creatives/remix',  key: 'nav.remix',            icon: '♻️' },
   { href: '/budget',           key: 'nav.budget',           icon: '💰' },
   { href: '/advisor',          key: 'nav.advisor',          icon: '🤖', agent: true },
   { href: '/decisions',        key: 'nav.decisions',        icon: '🧠', agent: true },
@@ -53,6 +54,7 @@ const adminItems = [
 const NAV_FALLBACK: Record<string, string> = {
   'nav.growth': 'Growth',
   'nav.creative_studio': 'Creative Studio',
+  'nav.remix': 'Remix',
   'nav.decisions': 'Decisions',
   'nav.approvals': 'Approvals',
   'nav.guardrails': 'Guardrails',
