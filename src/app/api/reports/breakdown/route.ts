@@ -96,13 +96,14 @@ export async function GET(req: NextRequest) {
   // column, only `channel`), so it's intentionally not applied here — the
   // Report side already restricts to that platform, and the join key match
   // takes care of the rest.
-  const cohortDate: { gte?: Date; lte?: Date } = {}
-  if (start) cohortDate.gte = start
+  // Same effective window as the Report query — a coherent join needs both
+  // sides bounded identically (incl. the default-window guard).
+  const cohortDate: { gte?: Date; lte?: Date } = { gte: effectiveStart }
   if (end) cohortDate.lte = end
   const cohorts = await prisma.cohortSnapshot.findMany({
     where: {
       orgId: org.id,
-      ...(start || end ? { cohortDate } : {}),
+      cohortDate,
       ...(osFilter ? { os: osFilter } : {}),
       ...(agencyFilter ? { agency: agencyFilter } : {}),
     },

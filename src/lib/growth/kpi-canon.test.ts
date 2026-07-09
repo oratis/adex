@@ -190,15 +190,27 @@ describe('aggregateCohortWindow — bi §7 shared cohort folding', () => {
   })
 
   it('gates d1/d7 numerator+denominator by maturity — immature cohorts excluded from both', () => {
-    // 2026-07-09 + 1 day = 2026-07-10 (mature as of `now`); +7 days = 2026-07-16 (immature)
+    // Maturity = day N has fully ENDED (cohortDate + N + 1, UTC).
+    // 2026-07-08: D1 day is 07-09, which ended at now (07-10) → D1 mature;
+    // D7 day is 07-15, far from over → D7 immature.
     const agg = aggregateCohortWindow(
-      [{ cohortDate: '2026-07-09', installs: 10, signups: 0, d1Retained: 4, d7Retained: 9, revenueD0: 0, revenueD7: 0 }],
+      [{ cohortDate: '2026-07-08', installs: 10, signups: 0, d1Retained: 4, d7Retained: 9, revenueD0: 0, revenueD7: 0 }],
       now,
     )
     expect(agg.d1).toBe(4)
     expect(agg.d1Base).toBe(10)
     expect(agg.d7).toBe(0)
     expect(agg.d7Base).toBe(0)
+  })
+
+  it('a cohort whose D1 day is still in progress stays out of the D1 rate entirely', () => {
+    // 2026-07-09's D1 day is 07-10 — the same day as `now`, still collecting.
+    const agg = aggregateCohortWindow(
+      [{ cohortDate: '2026-07-09', installs: 10, signups: 0, d1Retained: 4, d7Retained: 0, revenueD0: 0, revenueD7: 0 }],
+      now,
+    )
+    expect(agg.d1).toBe(0)
+    expect(agg.d1Base).toBe(0)
   })
 
   it('empty input yields an all-zero aggregate', () => {

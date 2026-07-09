@@ -57,7 +57,10 @@ export async function resolveReportAgency(orgId: string, platform: string): Prom
   const account = await prisma.platformAccount.findFirst({
     where: { orgId, platform, isPrimary: true },
   })
-  return account?.agency ?? null
+  // Lowercase to match parseCampaignName's normalization — the funnel join
+  // (reports/breakdown) is an exact string match on agency, so a mixed-case
+  // value here ("GroupM") would permanently miss cohort rows ("groupm").
+  return account?.agency?.trim().toLowerCase() || null
 }
 
 /**

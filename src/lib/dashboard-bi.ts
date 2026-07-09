@@ -301,6 +301,8 @@ export function aggregateBreakdownRows(rows: BreakdownRow[], rangeLabel: string)
     clicks: number
     spend: number
     signups: number
+    /** Spend from joined rows only — the valid costPerSignup denominator's twin. */
+    joinedSpend: number
     hasSignups: boolean
   }
   const groups = new Map<string, Agg>()
@@ -308,7 +310,7 @@ export function aggregateBreakdownRows(rows: BreakdownRow[], rangeLabel: string)
     const key = `${r.os ?? ''}|${r.platform}|${r.agency ?? ''}`
     let g = groups.get(key)
     if (!g) {
-      g = { os: r.os, platform: r.platform, agency: r.agency, impressions: 0, clicks: 0, spend: 0, signups: 0, hasSignups: false }
+      g = { os: r.os, platform: r.platform, agency: r.agency, impressions: 0, clicks: 0, spend: 0, signups: 0, joinedSpend: 0, hasSignups: false }
       groups.set(key, g)
     }
     g.impressions += r.impressions
@@ -316,6 +318,7 @@ export function aggregateBreakdownRows(rows: BreakdownRow[], rangeLabel: string)
     g.spend += r.spend
     if (r.signups !== null) {
       g.signups += r.signups
+      g.joinedSpend += r.spend
       g.hasSignups = true
     }
   }
@@ -330,7 +333,10 @@ export function aggregateBreakdownRows(rows: BreakdownRow[], rangeLabel: string)
       spend: g.spend,
       cpc: calcCpc(g.spend, g.clicks),
       signups: g.hasSignups ? g.signups : null,
-      costPerSignup: g.hasSignups ? calcCostPerSignup(g.spend, g.signups) : null,
+      // Divide joined-days spend by joined-days signups — mixing all-days
+      // spend with joined-only signups (funnelJoin:'partial') silently
+      // inflates the KPI, same reason the rate columns below stay null.
+      costPerSignup: g.hasSignups ? calcCostPerSignup(g.joinedSpend, g.signups) : null,
       d1Rate: null,
       d7Rate: null,
       d0Roi: null,
