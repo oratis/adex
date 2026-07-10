@@ -22,6 +22,8 @@
 
 原则:**请求-响应的事(API 调用、LLM 调用、任务编排)在 service 进程;分钟级批处理(音视频)在 Job 容器**。Cloud Run Jobs 支持长时任务,ffmpeg/tesseract/whisper-cpp(CPU 推理)容器化无障碍;service 与 job 共享同一 Cloud SQL + GCS。
 
+**存储写入决议(2026-07-10)**:个人账号不直写生产 bucket(`adex-data-gameclaw` 对个人账号只读,IAM 不另开)——媒体**一律经 ingest API 由 Cloud Run 服务账号在服务端写入**(PR #1 的 `mediaUrl` fetch→uploadToGCS 路径)。Seedance 锚定生成所需的参照素材公网 URL 也由此获得;实验排期在 PR #1 合并部署之后。
+
 ## 2. 各环节设计
 
 | # | 环节 | 跑在哪 | 触发 | 输入 → 输出 | 人的位置 |
