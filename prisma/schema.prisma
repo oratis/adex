@@ -129,6 +129,10 @@ model Organization {
   appReviews          AppReview[]
   creativeBriefs      CreativeBrief[]
   creativeVariants    CreativeVariant[]
+
+  // Competitor intel (docs/growth/07 §4, 09 §3)
+  competitorCreatives CompetitorCreative[]
+  remixJobs           RemixJob[]
 }
 
 model Webhook {
@@ -978,4 +982,75 @@ model CreativeVariant {
 
   @@index([briefId])
   @@index([orgId])
+}
+
+// =====================================================================
+// Competitor intel (docs/growth/07-competitor-intel-remix.md §4,
+// docs/growth/09-pipeline-adex-integration.md §3)
+// =====================================================================
+
+// Competitor ad creative pulled from AppGrowing (or another future source),
+// pushed via POST /api/ingest/competitor. Idempotent on (orgId, source,
+// externalId). `assetId` links to our own GCS copy of the media once
+// fetched/uploaded — see src/lib/platforms/appgrowing.ts.
+model CompetitorCreative {
+  id             String   @id @default(cuid())
+  orgId          String
+  source         String   @default("appgrowing") // where this row was sourced from
+  externalId     String                          // source's own id → idempotency key
+  // Hard metadata
+  appName        String?
+  advertiser     String?
+  mediaPlatforms Json?                           // ["google_ads","meta",...]
+  adFormat       String?
+  region         String?
+  language       String?
+  adDays         Int?                            // days live — longevity proxy
+  impressions    BigInt?
+  firstSeenAt    DateTime?
+  lastSeenAt     DateTime?
+  originalPostUrl String?                        // public original source (e.g. YouTube)
+  ratio          String?
+  duration       Int?
+  // AI analysis layer (cached from the source, not re-derived here)
+  creativeTags        Json?
+  sellingPoints       Json?
+  emotionalTriggers   Json?
+  screenUnderstanding Json?
+  storyboard          Json?                      // shot-by-shot breakdown
+  transcript          String?                    // speech-to-text
+  bgm                 String?                    // recognition result only — never the audio itself (IP risk)
+  aiPrompt             String?                   // source-inferred generation prompt
+  segmentPlan          Json?                     // segment routing plan (09 §3 addition)
+  rawMeta               Json?                    // raw source response, kept for audit
+  // Links
+  assetId        String?                         // our GCS copy (Asset)
+  ingestedAt     DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, source, externalId])
+  @@index([orgId, appName])
+}
+
+// Queryable Remix job ledger — tracks turning a CompetitorCreative into an
+// our-own-IP Creative via Seedance2. Not wired to a processing engine in
+// this PR (Phase 2, docs/growth/09 §3) — the model exists so the ledger can
+// be written to by the local creative-pipeline tooling.
+model RemixJob {
+  id                    String   @id @default(cuid())
+  orgId                 String
+  competitorCreativeId  String
+  briefId               String?                  // reuses CreativeBrief
+  mode                  String                   // text2video | image2video | full
+  remixPrompt           String                   // extractor output
+  status                String   @default("queued") // queued | generating | ready | failed | rejected
+  assetId               String?                  // Seedance2 output
+  creativeId            String?                  // landed Creative
+  aiPointsSpent         Int?                     // source AI-points cost
+  createdAt             DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, status])
 }
