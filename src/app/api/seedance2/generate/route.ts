@@ -95,7 +95,10 @@ export async function POST(req: NextRequest) {
         taskId: result.id,
         status: 'generating',
         ratio: ratio || '16:9',
-        duration: duration || 5,
+        // Asset.duration is an Int? column; a fractional client value would
+        // throw Prisma "Expected Int, provided Float" AFTER the paid Ark task
+        // already started. Round to match what createTask actually sends to Ark.
+        duration: Math.round(Number(duration) || 5),
         model: 'doubao-seedance-2-0-260128',
       },
     })

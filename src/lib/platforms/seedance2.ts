@@ -31,13 +31,19 @@ export interface Seedance2TaskRequest {
 export interface Seedance2TaskResponse {
   id: string
   model: string
-  // On a succeeded task, doubao-seedance-2-0-260128 returns the video URL at
-  // content[].video_url.url (real-world response shape) — output.video_url
-  // below is a fallback for older/other model responses. See
-  // docs/growth/09-pipeline-adex-integration.md §3.
-  content: ContentItem[]
+  // ⚠️ Response `content` is NOT the request's ContentItem[]. The real
+  // doubao-seedance-2-0-260128 success response (verified 2026-07-10 against
+  // task cgt-20260710153030-s5t5x) returns:
+  //   content:  { video_url: "https://..." }   ← an OBJECT, video_url is a STRING
+  //   duration: 5                              ← TOP-LEVEL number
+  //   output:   absent
+  // Older/other models may instead use output.video_url / output.duration, or
+  // an array-form content. We keep all shapes loosely typed and resolve
+  // defensively — see resolveVideoUrl / resolveDuration. Do NOT assume an array.
+  content?: unknown
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   error?: { code: string; message: string }
+  duration?: number
   output?: {
     video_url?: string
     duration?: number
@@ -49,15 +55,49 @@ export interface Seedance2TaskResponse {
   updated_at: number
 }
 
+/** Pull a string url out of a content-item value that may be a bare string or `{ url }`. */
+function videoUrlFromItem(item: unknown): string | undefined {
+  if (typeof item === 'string') return item
+  if (item && typeof item === 'object') {
+    const v = (item as { video_url?: unknown }).video_url
+    if (typeof v === 'string') return v
+    if (v && typeof v === 'object' && typeof (v as { url?: unknown }).url === 'string') {
+      return (v as { url: string }).url
+    }
+  }
+  return undefined
+}
+
 /**
- * Resolve the generated video URL from a task response. Prefers
- * `content[].video_url.url` (actual doubao-seedance-2-0-260128 response
- * shape, confirmed 2026-07 via creative-pipeline commit e06e215/1224f1c),
- * falls back to `output.video_url` for older/other model shapes.
+ * Resolve the generated video URL from a task response, defensive across shapes:
+ *   1. content as object `{ video_url: "http..." }` (real doubao-seedance-2-0-260128)
+ *   2. content as array of items (older/other models) — skips reference inputs (role set)
+ *   3. output.video_url (legacy fallback)
+ * Returns undefined rather than throwing on an unexpected shape.
  */
 export function resolveVideoUrl(task: Seedance2TaskResponse): string | undefined {
-  const fromContent = task.content?.find((c) => c.type === 'video_url' && c.video_url?.url)?.video_url?.url
-  return fromContent || task.output?.video_url
+  const content = task.content
+  if (Array.isArray(content)) {
+    for (const c of content) {
+      // Skip echoed reference inputs — only the generated output has no role.
+      if (c && typeof c === 'object' && (c as { role?: unknown }).role) continue
+      const url = videoUrlFromItem(c)
+      if (url) return url
+    }
+  } else {
+    const url = videoUrlFromItem((content as { video_url?: unknown } | undefined))
+    if (url) return url
+  }
+  return task.output?.video_url
+}
+
+/**
+ * Resolve the rendered duration (seconds), defensive across shapes: real model
+ * returns it top-level; others under output/usage. undefined if none present.
+ */
+export function resolveDuration(task: Seedance2TaskResponse): number | undefined {
+  const d = task.duration ?? task.output?.duration ?? task.usage?.duration
+  return typeof d === 'number' && Number.isFinite(d) ? Math.round(d) : undefined
 }
 
 export class Seedance2Client {
