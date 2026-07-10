@@ -24,33 +24,42 @@ function signHmac(secret: string, rawBody: string, timestamp = Math.floor(Date.n
   return { timestamp: String(timestamp), signature }
 }
 
-/** Register a fresh user + personal org, log in, return an authed request context + orgId. */
-async function registerAndLogin(request: APIRequestContext) {
-  const suffix = crypto.randomBytes(6).toString('hex')
-  const email = `e2e-competitor-${suffix}@adex.test`
-  const password = 'e2e-test-password-1234'
-
-  const reg = await request.post(p('/api/auth/register'), {
-    data: { email, password, name: 'E2E Competitor Tester' },
-  })
-  expect(reg.ok(), `register failed: ${reg.status()} ${await reg.text()}`).toBe(true)
-
-  const login = await request.post(p('/api/auth/login'), { data: { email, password } })
-  expect(login.ok(), `login failed: ${login.status()} ${await login.text()}`).toBe(true)
-
-  const orgsRes = await request.get(p('/api/orgs'))
-  expect(orgsRes.ok()).toBe(true)
-  const orgs = await orgsRes.json()
-  expect(Array.isArray(orgs) && orgs.length).toBeTruthy()
-
-  return { orgId: orgs[0].id as string, suffix }
-}
+// Register ONE user for the whole describe. The register endpoint is rate-
+// limited to 5/hour/IP, so registering per-test (× retries × reruns against a
+// reused dev server) flakes; the authed tests share this one context.
+let authed: APIRequestContext
+let orgId: string
+const suffix = crypto.randomBytes(6).toString('hex')
 
 test.describe('competitor intel ingest', () => {
-  test('rejects a request with a bad HMAC signature', async ({ request }) => {
-    const { orgId } = await registerAndLogin(request)
+  test.beforeAll(async ({ playwright }, testInfo) => {
+    const baseURL = testInfo.project.use.baseURL
+    authed = await playwright.request.newContext({ baseURL })
+    const email = `e2e-competitor-${suffix}@adex.test`
+    const password = 'e2e-test-password-1234'
+
+    const reg = await authed.post(p('/api/auth/register'), {
+      data: { email, password, name: 'E2E Competitor Tester' },
+    })
+    expect(reg.ok(), `register failed: ${reg.status()} ${await reg.text()}`).toBe(true)
+
+    const login = await authed.post(p('/api/auth/login'), { data: { email, password } })
+    expect(login.ok(), `login failed: ${login.status()} ${await login.text()}`).toBe(true)
+
+    const orgsRes = await authed.get(p('/api/orgs'))
+    expect(orgsRes.ok()).toBe(true)
+    const orgs = await orgsRes.json()
+    expect(Array.isArray(orgs) && orgs.length).toBeTruthy()
+    orgId = orgs[0].id as string
+  })
+
+  test.afterAll(async () => {
+    await authed?.dispose()
+  })
+
+  test('rejects a request with a bad HMAC signature', async () => {
     const body = JSON.stringify({ externalId: `bad-sig-${crypto.randomBytes(4).toString('hex')}` })
-    const res = await request.post(p(`/api/ingest/competitor?org=${orgId}`), {
+    const res = await authed.post(p(`/api/ingest/competitor?org=${orgId}`), {
       headers: {
         'content-type': 'application/json',
         'x-adex-timestamp': String(Math.floor(Date.now() / 1000)),
@@ -61,8 +70,7 @@ test.describe('competitor intel ingest', () => {
     expect(res.status()).toBe(401)
   })
 
-  test('ingests a competitor creative and upserts idempotently by externalId', async ({ request }) => {
-    const { orgId, suffix } = await registerAndLogin(request)
+  test('ingests a competitor creative and upserts idempotently by externalId', async () => {
     const externalId = `appgrowing-${suffix}-1`
     const payload = {
       externalId,
@@ -82,7 +90,7 @@ test.describe('competitor intel ingest', () => {
     const rawBody = JSON.stringify(payload)
     const { timestamp, signature } = signHmac(INGEST_SECRET, rawBody)
 
-    const res1 = await request.post(p(`/api/ingest/competitor?org=${orgId}`), {
+    const res1 = await authed.post(p(`/api/ingest/competitor?org=${orgId}`), {
       headers: {
         'content-type': 'application/json',
         'x-adex-timestamp': timestamp,
@@ -99,7 +107,7 @@ test.describe('competitor intel ingest', () => {
     // Re-ingest the same externalId — should update, not duplicate.
     const rawBody2 = JSON.stringify({ ...payload, adDays: 43 })
     const sig2 = signHmac(INGEST_SECRET, rawBody2)
-    const res2 = await request.post(p(`/api/ingest/competitor?org=${orgId}`), {
+    const res2 = await authed.post(p(`/api/ingest/competitor?org=${orgId}`), {
       headers: {
         'content-type': 'application/json',
         'x-adex-timestamp': sig2.timestamp,
@@ -113,7 +121,7 @@ test.describe('competitor intel ingest', () => {
 
     // GET /api/competitors — same authed context (cookie persists) — should
     // list exactly one row for this externalId, and reflect the update.
-    const list = await request.get(p(`/api/competitors?appName=Puzzle`))
+    const list = await authed.get(p(`/api/competitors?appName=Puzzle`))
     expect(list.ok()).toBe(true)
     const rows = await list.json()
     const matches = (rows as Array<{ externalId: string; adDays: number | null }>).filter(
@@ -123,10 +131,10 @@ test.describe('competitor intel ingest', () => {
     expect(matches[0].adDays).toBe(43)
   })
 
-  test('GET /api/competitors requires a logged-in session', async ({ playwright }) => {
-    const anonRequest = await playwright.request.newContext({ baseURL: `http://localhost:${process.env.PORT || '3000'}` })
-    const res = await anonRequest.get(p('/api/competitors'))
+  test('GET /api/competitors requires a logged-in session', async ({ request }) => {
+    // The default `request` fixture is unauthenticated and honours the config
+    // baseURL — no hardcoded host, no shared cookies.
+    const res = await request.get(p('/api/competitors'))
     expect(res.status()).toBe(401)
-    await anonRequest.dispose()
   })
 })
