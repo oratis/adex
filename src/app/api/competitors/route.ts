@@ -43,6 +43,9 @@ export async function GET(req: NextRequest) {
   const offset = Math.max(clampInt(sp.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER), 0)
 
   const where: Prisma.CompetitorCreativeWhereInput = { orgId }
+  // `id` — exact-match lookup for the Remix-studio handoff (?competitorId=).
+  const id = sp.get('id')?.trim()
+  if (id) where.id = id
   if (app) where.appName = { contains: app, mode: 'insensitive' }
   if (relevance) where.relevance = relevance
   const adDaysMin = sp.get('adDays')
