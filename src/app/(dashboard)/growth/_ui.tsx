@@ -28,6 +28,7 @@ const TABS = [
   { href: '/growth/cohorts', label: 'Cohorts' },
   { href: '/growth/creators', label: 'Creators' },
   { href: '/growth/reviews', label: 'Reviews' },
+  { href: '/growth/competitors', label: 'Competitors' },
 ]
 
 export function GrowthTabs() {

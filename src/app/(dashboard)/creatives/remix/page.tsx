@@ -92,6 +92,29 @@ export default function RemixStudioPage() {
     loadCompetitors()
   }, [loadCompetitors])
 
+  // Deep-link handoff from the competitor panel (?competitorId=…) — preselect it.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('competitorId')
+    if (!id) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(api(`/api/competitors?id=${encodeURIComponent(id)}&limit=1`))
+        const data = await res.json()
+        const c = Array.isArray(data.competitors) ? data.competitors[0] : null
+        if (c && !cancelled) {
+          setSelected(c)
+          setForbidden([c.appName, c.advertiser].filter(Boolean).join(', '))
+        }
+      } catch {
+        // ignore — the user can still pick manually
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   function selectCompetitor(c: Competitor) {
     setSelected(c)
     // Prefill "never depict" with the competitor's own brand so IP can't leak in.
