@@ -219,3 +219,26 @@
 - **Tier 1 缩略图/首帧海报**(~百KB,低风险):存 GCS 给竞品情报面板做预览 —— 合理必要。
 - **Tier 2 完整视频 ✅ 已法务通过 + 上线**(默认**不批量存**):`POST /api/competitors/media`(单条精选、传公开/套餐内 `sourceUrl`)→ `storeCompetitorMedia(allowVideo:true)` → GCS + `Asset(source:'appgrowing', tags:['tier2-video'])`,回填 `CompetitorCreative.assetId`;**50MB 上限 + SSRF 门 + `competitor.video_store` audit**;bulk ingest 同加尺寸上限。**仅内部参照,不发布、绝不作生成参照**(remix 恒 text2video)。
 - **不做**绕门禁批量抓 CDN;要规模化先升级到含 Unlimited Download 的套餐(官方许可)或走公开源,并过法务"内部参照存储"口径。
+
+## 11. TODO 审计(2026-07-10 · review 全计划 vs 现状)
+
+按 [06 §7](06-competitor-intel-remix.md) 四期审计:Phase 0–2 骨架在生产(rev 44),Phase 3 基本空。
+
+**🔴 P0 —— 挡住"真能用"(非代码,需人/运维):**
+| # | TODO | 为什么 |
+|---|---|---|
+| P0-1 | 生产灌一批真竞品数据 | DB 无 `CompetitorCreative` 行,面板/remix 现在是空的 |
+| P0-2 | prod 配 `ANTHROPIC_API_KEY` | 实测未配 → remix 走确定性兜底,不是 Claude 撰写的差异化 brief |
+| P0-3 | 法务 push 口径(R1) | 已过 Tier-2 存储;把 remix 产出**推上平台**前的书面认可还没拿 |
+| P0-4 | 登录态真机走查 | 还没人在 prod 跑通一条真实 remix + Tier-2 保存 |
+
+**🟠 P1 / 🟡 P2 —— 代码,本轮分多个 PR 推进:**
+| # | TODO | 处理 |
+|---|---|---|
+| P1-5 | remix 无预算/限流护栏(R3) | **PR:remix-hardening** —— per-org 限流 + 每日上限 |
+| P1-6 | `RemixJob` 模型缺失(可查询队列 + 历史) | **PR:remix-jobs** —— 模型 + 迁移 + 回写 + 历史查询 |
+| P2-8 | 竞品媒体 URL 未持久化(Tier-2 取源难) | **PR:remix-jobs** —— `CompetitorCreative.mediaUrl` + ingest 存 + Tier-2 复用 |
+| P2-9 | `/api/competitors/media`、`GET /api/competitors` 无 e2e | **PR:coverage-cron** —— 补 e2e |
+| P1-7 | 无每日自动同步 | **PR:coverage-cron** —— `cron/competitor-sync` 脚手架(无 API 前只刷新/占位) |
+
+**⚪ 仍 deferred(更大/更低优先,先记):** `appgrowing.ts` 连接器抽象(P2-10)· 竞品趋势看板 · remix 多变体批量(Studio 有 `DEFAULT_MAX_VARIANTS=40`)· `completeWithMedia`(Claude 亲看竞品画面)。
