@@ -1012,6 +1012,7 @@ model CompetitorCreative {
   originalPostUrl String?                        // public original source (e.g. YouTube)
   ratio          String?
   duration       Int?
+  level          String?                         // classification tier L1/L2/L3/L4 (routing axis, 09 §3)
   // AI analysis layer (cached from the source, not re-derived here)
   creativeTags        Json?
   sellingPoints       Json?
@@ -1031,6 +1032,7 @@ model CompetitorCreative {
 
   @@unique([orgId, source, externalId])
   @@index([orgId, appName])
+  @@index([orgId, level])
 }
 
 // Queryable Remix job ledger — tracks turning a CompetitorCreative into an
