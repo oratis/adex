@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
-import { Seedance2Client } from '@/lib/platforms/seedance2'
+import { Seedance2Client, resolveVideoUrl } from '@/lib/platforms/seedance2'
 
 const SEEDANCE2_API_KEY = process.env.SEEDANCE2_API_KEY || ''
 
@@ -33,10 +33,11 @@ export async function GET(req: NextRequest) {
       if (asset) {
         const updateData: Record<string, unknown> = {}
 
-        if (task.status === 'succeeded' && task.output?.video_url) {
+        const videoUrl = resolveVideoUrl(task)
+        if (task.status === 'succeeded' && videoUrl) {
           updateData.status = 'ready'
-          updateData.fileUrl = task.output.video_url
-          if (task.output.duration) updateData.duration = task.output.duration
+          updateData.fileUrl = videoUrl
+          if (task.output?.duration) updateData.duration = task.output.duration
         } else if (task.status === 'failed') {
           updateData.status = 'failed'
           updateData.errorMessage = task.error?.message || 'Generation failed'

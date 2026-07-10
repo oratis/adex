@@ -31,6 +31,10 @@ export interface Seedance2TaskRequest {
 export interface Seedance2TaskResponse {
   id: string
   model: string
+  // On a succeeded task, doubao-seedance-2-0-260128 returns the video URL at
+  // content[].video_url.url (real-world response shape) — output.video_url
+  // below is a fallback for older/other model responses. See
+  // docs/growth/09-pipeline-adex-integration.md §3.
   content: ContentItem[]
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   error?: { code: string; message: string }
@@ -43,6 +47,17 @@ export interface Seedance2TaskResponse {
   }
   created_at: number
   updated_at: number
+}
+
+/**
+ * Resolve the generated video URL from a task response. Prefers
+ * `content[].video_url.url` (actual doubao-seedance-2-0-260128 response
+ * shape, confirmed 2026-07 via creative-pipeline commit e06e215/1224f1c),
+ * falls back to `output.video_url` for older/other model shapes.
+ */
+export function resolveVideoUrl(task: Seedance2TaskResponse): string | undefined {
+  const fromContent = task.content?.find((c) => c.type === 'video_url' && c.video_url?.url)?.video_url?.url
+  return fromContent || task.output?.video_url
 }
 
 export class Seedance2Client {
@@ -121,12 +136,18 @@ export class Seedance2Client {
       }
     }
 
+    // Ark rejects a fractional `duration` with 400 InvalidParameter — the
+    // API only accepts whole seconds (confirmed 2026-07 via creative-pipeline
+    // commit e06e215/1224f1c). Round rather than truncate so e.g. 4.6s asks
+    // for 5s, not 4s.
+    const duration = Math.round(params.duration || 5)
+
     const body: Seedance2TaskRequest = {
       model: this.model,
       content,
       generate_audio: params.generateAudio ?? false,
       ratio: params.ratio || '16:9',
-      duration: params.duration || 5,
+      duration,
       watermark: params.watermark ?? false,
     }
 
