@@ -6,10 +6,8 @@ import { requireAuthWithOrg } from '@/lib/auth'
  * GET /api/competitors?appName=&level=&orderBy=adDays|impressions&limit=
  *
  * Org-scoped listing of ingested competitor creatives (session auth — never
- * trusts a client-supplied orgId). `level` has no dedicated column (see
- * docs/growth/09-pipeline-adex-integration.md §3) — it's whatever the
- * source's classification stored under `rawMeta.level`, filtered via a
- * Postgres JSON-path match.
+ * trusts a client-supplied orgId). `level` is a first-class column filtered
+ * directly (indexed via @@index([orgId, level])).
  *
  * Ref: docs/growth/09-pipeline-adex-integration.md §3
  */
@@ -33,7 +31,7 @@ export async function GET(req: NextRequest) {
 
     const where: Record<string, unknown> = { orgId: org.id }
     if (appName) where.appName = { contains: appName }
-    if (level) where.rawMeta = { path: ['level'], equals: level }
+    if (level) where.level = level
 
     const orderBy: Record<string, 'asc' | 'desc'> =
       orderByParam === 'adDays'
@@ -55,7 +53,10 @@ export async function GET(req: NextRequest) {
     }))
 
     return NextResponse.json(serialized)
-  } catch {
-    return NextResponse.json([], { status: 200 })
+  } catch (error) {
+    // Don't mask a real query failure as an empty library — surface a 500 so
+    // the caller (and logs) can tell "broken" apart from "no rows".
+    console.error('GET /api/competitors failed', error)
+    return NextResponse.json({ error: 'failed to list competitors' }, { status: 500 })
   }
 }

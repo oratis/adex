@@ -78,7 +78,7 @@ export async function uploadToGCS(
  * Delete a file from GCS by its public URL.
  */
 export async function deleteFromGCS(publicUrl: string): Promise<void> {
-  const prefix = `https://storage.googleapis.com/${GCS_BUCKET}/`
+  const prefix = gcsPublicPrefix()
   if (!publicUrl.startsWith(prefix)) return
 
   const objectPath = publicUrl.slice(prefix.length)
@@ -90,6 +90,66 @@ export async function deleteFromGCS(publicUrl: string): Promise<void> {
     method: 'DELETE',
     headers: { 'Authorization': `Bearer ${token}` },
   })
+}
+
+/** Public URL prefix for objects in our own bucket. Single source of truth. */
+export function gcsPublicPrefix(): string {
+  return `https://storage.googleapis.com/${GCS_BUCKET}/`
+}
+
+/** Is this URL an object already hosted in our own GCS bucket? */
+export function isOwnGcsUrl(url: string): boolean {
+  return url.startsWith(gcsPublicPrefix())
+}
+
+const PRIVATE_HOST_RE =
+  /^(localhost$|127\.|10\.|192\.168\.|169\.254\.|::1$|\[::1\]$|0\.0\.0\.0$|metadata\.google\.internal$)|^172\.(1[6-9]|2\d|3[01])\./i
+
+/**
+ * Fetch a remote media URL and upload it to GCS, returning the public URL.
+ * Hardened for server-side fetch of caller-supplied URLs:
+ *  - only http/https, and the host must not resolve to a private/link-local
+ *    range (blocks SSRF to the metadata server / internal services)
+ *  - rejects bodies over `maxBytes` (Content-Length pre-check + hard cap while
+ *    reading) so one oversized file can't OOM the instance
+ * Returns `{ fileUrl, contentType }`. Throws on validation/size/fetch failure.
+ */
+export async function uploadFromUrl(
+  url: string,
+  filename: string,
+  opts: { maxBytes?: number } = {},
+): Promise<{ fileUrl: string; contentType: string }> {
+  const maxBytes = opts.maxBytes ?? 100 * 1024 * 1024 // 100MB default cap
+
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error('invalid mediaUrl')
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`mediaUrl scheme not allowed: ${parsed.protocol}`)
+  }
+  if (PRIVATE_HOST_RE.test(parsed.hostname)) {
+    throw new Error(`mediaUrl host not allowed: ${parsed.hostname}`)
+  }
+
+  const res = await fetch(url, { redirect: 'error' })
+  if (!res.ok) throw new Error(`fetch mediaUrl failed (${res.status})`)
+
+  const declaredLen = Number(res.headers.get('content-length') || '0')
+  if (declaredLen > maxBytes) {
+    throw new Error(`mediaUrl too large (${declaredLen} > ${maxBytes})`)
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer())
+  if (buffer.byteLength > maxBytes) {
+    throw new Error(`mediaUrl too large (${buffer.byteLength} > ${maxBytes})`)
+  }
+
+  const contentType = res.headers.get('content-type')?.split(';')[0].trim() || 'application/octet-stream'
+  const fileUrl = await uploadToGCS(buffer, filename, contentType)
+  return { fileUrl, contentType }
 }
 
 /**

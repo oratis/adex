@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { verifyHmac } from '@/lib/growth/ingest-auth'
-import { uploadToGCS } from '@/lib/storage'
+import { isOwnGcsUrl, uploadFromUrl } from '@/lib/storage'
 import {
   APPGROWING_SOURCE,
   parseCompetitorItems,
-  isOwnGcsUrl,
   mapCompetitorItemToFields,
   type CompetitorIngestItem,
 } from '@/lib/platforms/appgrowing'
@@ -24,8 +23,14 @@ import {
  */
 
 const IMAGE_EXT_RE = /\.(jpe?g|png|webp|gif)(\?|$)/i
+const MAX_INGEST_ITEMS = 50
 
-function guessAssetType(url: string): string {
+/** image vs video, preferring the response content-type over the URL extension. */
+function assetType(url: string, contentType?: string): string {
+  if (contentType) {
+    if (contentType.startsWith('image/')) return 'image'
+    if (contentType.startsWith('video/')) return 'video'
+  }
   return IMAGE_EXT_RE.test(url) ? 'image' : 'video'
 }
 
@@ -36,37 +41,27 @@ async function ensureAsset(
   const mediaUrl = item.mediaUrl
   if (!mediaUrl) return null
 
+  // Already hosted in our own bucket → link directly, no re-fetch.
+  // External URL → SSRF/size-guarded fetch + upload (see storage.uploadFromUrl).
+  let fileUrl: string
+  let type: string
   if (isOwnGcsUrl(mediaUrl)) {
-    const asset = await prisma.asset.create({
-      data: {
-        orgId: ctx.orgId,
-        uploadedBy: ctx.uploadedBy,
-        name: item.appName || `Competitor ${item.externalId}`,
-        type: guessAssetType(mediaUrl),
-        source: APPGROWING_SOURCE,
-        fileUrl: mediaUrl,
-        status: 'ready',
-        ratio: item.ratio ?? undefined,
-        duration: item.duration ?? undefined,
-      },
-    })
-    return asset.id
+    fileUrl = mediaUrl
+    type = assetType(mediaUrl)
+  } else {
+    const ext = IMAGE_EXT_RE.test(mediaUrl) ? 'jpg' : 'mp4'
+    const filename = `competitor/${item.externalId}-${Date.now()}.${ext}`
+    const uploaded = await uploadFromUrl(mediaUrl, filename)
+    fileUrl = uploaded.fileUrl
+    type = assetType(mediaUrl, uploaded.contentType)
   }
-
-  const res = await fetch(mediaUrl)
-  if (!res.ok) throw new Error(`fetch mediaUrl failed (${res.status})`)
-  const buffer = Buffer.from(await res.arrayBuffer())
-  const contentType = res.headers.get('content-type') || 'application/octet-stream'
-  const ext = guessAssetType(mediaUrl) === 'image' ? 'jpg' : 'mp4'
-  const filename = `competitor/${item.externalId}-${Date.now()}.${ext}`
-  const fileUrl = await uploadToGCS(buffer, filename, contentType)
 
   const asset = await prisma.asset.create({
     data: {
       orgId: ctx.orgId,
       uploadedBy: ctx.uploadedBy,
       name: item.appName || `Competitor ${item.externalId}`,
-      type: guessAssetType(mediaUrl),
+      type,
       source: APPGROWING_SOURCE,
       fileUrl,
       status: 'ready',
@@ -106,6 +101,15 @@ export async function POST(req: NextRequest) {
 
   const items = parseCompetitorItems(payload)
   if (items.length === 0) return NextResponse.json({ ok: true, results: [] })
+  // Each item may trigger a media fetch+upload; a large batch in one request
+  // path risks Cloud Run's request timeout. Cap it — larger pushes should be
+  // chunked by the caller (or run via the pipeline worker, docs 09 §1).
+  if (items.length > MAX_INGEST_ITEMS) {
+    return NextResponse.json(
+      { error: `too many items (${items.length} > ${MAX_INGEST_ITEMS}); chunk the batch` },
+      { status: 413 },
+    )
+  }
 
   const results: Array<{ externalId: string; status: 'created' | 'updated' | 'failed'; id?: string; error?: string }> = []
 

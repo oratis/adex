@@ -9,7 +9,6 @@
  *      docs/growth/09-pipeline-adex-integration.md §3
  */
 
-import { GCS_BUCKET } from '@/lib/storage'
 import type { Prisma } from '@/generated/prisma/client'
 
 export const APPGROWING_SOURCE = 'appgrowing'
@@ -23,7 +22,8 @@ export interface CompetitorIngestItem {
   adFormat?: string | null
   region?: string | null
   language?: string | null
-  adDays?: number | null
+  level?: string | null
+  adDays?: number | string | null
   impressions?: number | string | null
   firstSeenAt?: string | null
   lastSeenAt?: string | null
@@ -70,7 +70,11 @@ export function parseCompetitorItems(raw: unknown): CompetitorIngestItem[] {
       adFormat: typeof entry.adFormat === 'string' ? entry.adFormat : null,
       region: typeof entry.region === 'string' ? entry.region : null,
       language: typeof entry.language === 'string' ? entry.language : null,
-      adDays: typeof entry.adDays === 'number' ? entry.adDays : null,
+      level: typeof entry.level === 'string' ? entry.level : null,
+      adDays:
+        typeof entry.adDays === 'number' || typeof entry.adDays === 'string'
+          ? entry.adDays
+          : null,
       impressions:
         typeof entry.impressions === 'number' || typeof entry.impressions === 'string'
           ? entry.impressions
@@ -97,11 +101,6 @@ export function parseCompetitorItems(raw: unknown): CompetitorIngestItem[] {
   return out
 }
 
-/** True when `url` already points at our own GCS bucket (no re-fetch needed). */
-export function isOwnGcsUrl(url: string): boolean {
-  return url.startsWith(`https://storage.googleapis.com/${GCS_BUCKET}/`)
-}
-
 /** Parse a date string, returning null on anything invalid/absent. */
 function parseDate(value: string | null | undefined): Date | null {
   if (!value) return null
@@ -109,24 +108,59 @@ function parseDate(value: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
+const SUFFIX_MULT: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9 }
+
+/**
+ * Parse a human-formatted count into a number: accepts plain numbers,
+ * comma-grouped ("1,942"), and K/M/B-suffixed ("710.4K", "2.3M") — the exact
+ * forms AppGrowing's UI displays (docs §1.3). Returns null on anything
+ * unparseable. `Number("710.4K")` is NaN, so the old `Number()` path silently
+ * nulled these — the primary ranking signals — which this fixes.
+ */
+function parseHumanNumber(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  const s = value.trim().replace(/,/g, '')
+  const m = /^(-?\d+(?:\.\d+)?)\s*([kmb])?$/i.exec(s)
+  if (!m) return null
+  const n = Number(m[1])
+  if (!Number.isFinite(n)) return null
+  const mult = m[2] ? SUFFIX_MULT[m[2].toLowerCase()] : 1
+  return n * mult
+}
+
 /** Parse impressions into a BigInt, returning null on anything invalid/absent. */
 function parseImpressions(value: number | string | null | undefined): bigint | null {
-  if (value === null || value === undefined) return null
+  const n = parseHumanNumber(value)
+  if (n === null) return null
   try {
-    return BigInt(Math.trunc(Number(value)))
+    return BigInt(Math.trunc(n))
   } catch {
     return null
   }
+}
+
+/** Parse adDays into an integer, returning null on anything invalid/absent. */
+function parseAdDays(value: number | string | null | undefined): number | null {
+  const n = parseHumanNumber(value)
+  return n === null ? null : Math.trunc(n)
 }
 
 /**
  * Merge `keyframeUrl` (no dedicated column) into rawMeta so it isn't lost.
  */
 function mergeRawMeta(item: CompetitorIngestItem): Record<string, unknown> | null {
-  const base = item.rawMeta && typeof item.rawMeta === 'object' ? { ...(item.rawMeta as object) } : {}
-  const merged: Record<string, unknown> = { ...base }
-  if (item.keyframeUrl) merged.keyframeUrl = item.keyframeUrl
-  return Object.keys(merged).length ? merged : null
+  // Only spread plain objects — `typeof [] === 'object'`, so an array rawMeta
+  // would be corrupted into `{0:.., 1:..}`. Keep an array payload under a key.
+  const raw = item.rawMeta
+  const base: Record<string, unknown> =
+    raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? { ...(raw as Record<string, unknown>) }
+      : raw !== null && raw !== undefined
+        ? { _raw: raw }
+        : {}
+  if (item.keyframeUrl) base.keyframeUrl = item.keyframeUrl
+  return Object.keys(base).length ? base : null
 }
 
 type JsonField = Prisma.InputJsonValue | undefined
@@ -139,6 +173,7 @@ export interface CompetitorCreativeFields {
   adFormat: string | null
   region: string | null
   language: string | null
+  level: string | null
   adDays: number | null
   impressions: bigint | null
   firstSeenAt: Date | null
@@ -171,7 +206,8 @@ export function mapCompetitorItemToFields(item: CompetitorIngestItem): Competito
     adFormat: item.adFormat ?? null,
     region: item.region ?? null,
     language: item.language ?? null,
-    adDays: item.adDays ?? null,
+    level: item.level ?? null,
+    adDays: parseAdDays(item.adDays),
     impressions: parseImpressions(item.impressions),
     firstSeenAt: parseDate(item.firstSeenAt),
     lastSeenAt: parseDate(item.lastSeenAt),
