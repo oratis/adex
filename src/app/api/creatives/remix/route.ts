@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { Seedance2Client, assetUpdateFromTask } from '@/lib/platforms/seedance2'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import {
   buildRemixBrief,
   competitorCreativeToAnalysis,
@@ -23,6 +24,9 @@ import {
 } from '@/lib/growth/remix-brief'
 
 const SEEDANCE2_API_KEY = process.env.SEEDANCE2_API_KEY || ''
+// Cost guardrails (R3): burst limit + per-org daily cap on paid Seedance2 renders.
+const REMIX_BURST_LIMIT = Number(process.env.REMIX_BURST_LIMIT || 20)
+const REMIX_DAILY_CAP = Number(process.env.REMIX_DAILY_CAP || 50)
 
 function ratioDims(ratio: Ratio): { width: number; height: number } {
   switch (ratio) {
@@ -46,6 +50,21 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Cost guardrails before any paid work: burst limit + per-org daily cap.
+    const rl = checkRateLimit(req, { key: 'remix', limit: REMIX_BURST_LIMIT, windowMs: 600_000, identity: org.id })
+    if (!rl.ok) return rateLimitResponse(rl)
+    const since = new Date()
+    since.setHours(0, 0, 0, 0)
+    const todayCount = await prisma.creative.count({
+      where: { orgId: org.id, source: 'remix', createdAt: { gte: since } },
+    })
+    if (todayCount >= REMIX_DAILY_CAP) {
+      return NextResponse.json(
+        { error: `Daily remix cap reached (${REMIX_DAILY_CAP}). Resets at midnight.` },
+        { status: 429 },
+      )
+    }
+
     const body = await req.json()
     const { competitorCreativeId, product, positioning, audience, artDirection, cta, differentiation, forbidden } = body
 
