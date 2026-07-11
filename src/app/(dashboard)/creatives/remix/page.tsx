@@ -73,6 +73,35 @@ export default function RemixStudioPage() {
   const [renders, setRenders] = useState<RemixRender[]>([])
   const [, setTick] = useState(0)
 
+  // Load recent remixes so a refresh keeps history (not just this session's renders).
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(api('/api/creatives/remix?list=1'))
+        const data = await res.json()
+        if (cancelled || !Array.isArray(data.remixes)) return
+        const past: RemixRender[] = data.remixes
+          .filter((r: { status: string }) => r.status !== 'generating')
+          .map((r: { id: string; name: string; status: string; fileUrl: string | null; sourceRef: string | null; createdAt: string }) => ({
+            creativeId: r.id,
+            assetId: '',
+            name: r.name,
+            competitor: r.sourceRef ?? '—',
+            status: r.status,
+            fileUrl: r.fileUrl,
+            startedAt: Date.parse(r.createdAt) || 0,
+          }))
+        setRenders((prev) => (prev.length > 0 ? prev : past))
+      } catch {
+        // ignore — tray just starts empty
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const loadCompetitors = useCallback(async () => {
     setLoading(true)
     try {
