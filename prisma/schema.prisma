@@ -1026,6 +1026,10 @@ model CompetitorCreative {
   bgm                 String?                       // recognition result only — never the audio (§6 R1)
   aiPrompt            String?                       // AppGrowing-derived T2V prompt (Remix seed)
   rawMeta             Json?                         // original ingested row, archived for provenance
+  // The competitor's own media URL captured at ingest (AppGrowing CDN / Original Post).
+  // Persisted so Tier-2 "Save video" has a source without a fresh manual paste; it may be
+  // signed/expiring, so a caller-supplied sourceUrl still overrides it.
+  mediaUrl        String?
   // Link to our GCS-stored copy of the media (enriched rows only)
   assetId         String?
   ingestedAt      DateTime  @default(now())

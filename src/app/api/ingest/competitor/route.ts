@@ -139,7 +139,8 @@ function toData(
     duration: row.duration,
     assetId,
   }
-  // AI-enrichment layer — preserve prior analysis when a re-ingest omits it.
+  // Preserve the captured media URL + AI analysis when a lighter re-ingest omits them.
+  if (row.mediaUrl != null) d.mediaUrl = row.mediaUrl
   if (row.aiPrompt != null) d.aiPrompt = row.aiPrompt
   if (row.transcript != null) d.transcript = row.transcript
   if (row.bgm != null) d.bgm = row.bgm
