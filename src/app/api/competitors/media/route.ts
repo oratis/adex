@@ -30,19 +30,25 @@ export async function POST(req: NextRequest) {
 
   try {
     const { competitorCreativeId, sourceUrl } = await req.json()
-    if (!competitorCreativeId || typeof sourceUrl !== 'string') {
-      return NextResponse.json({ error: 'competitorCreativeId and sourceUrl are required' }, { status: 400 })
-    }
-    if (!isPublicHttpUrl(sourceUrl)) {
-      return NextResponse.json({ error: 'sourceUrl must be a public http(s) URL' }, { status: 400 })
+    if (!competitorCreativeId) {
+      return NextResponse.json({ error: 'competitorCreativeId is required' }, { status: 400 })
     }
 
     const cc = await prisma.competitorCreative.findFirst({
       where: { id: competitorCreativeId, orgId },
-      select: { id: true, externalId: true, appName: true, ratio: true, duration: true, assetId: true },
+      select: { id: true, externalId: true, appName: true, ratio: true, duration: true, assetId: true, mediaUrl: true },
     })
     if (!cc) {
       return NextResponse.json({ error: 'Competitor creative not found' }, { status: 404 })
+    }
+
+    // Prefer a caller-supplied fresh URL; else fall back to the mediaUrl captured at ingest.
+    const effectiveUrl = typeof sourceUrl === 'string' && sourceUrl.trim() ? sourceUrl.trim() : cc.mediaUrl
+    if (!effectiveUrl) {
+      return NextResponse.json({ error: 'No sourceUrl provided and no stored mediaUrl for this creative' }, { status: 400 })
+    }
+    if (!isPublicHttpUrl(effectiveUrl)) {
+      return NextResponse.json({ error: 'sourceUrl must be a public http(s) URL' }, { status: 400 })
     }
 
     // Idempotent: one Tier-2 video Asset per competitor creative.
@@ -56,7 +62,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch + store — allowVideo:true (legal-cleared), capped in storeCompetitorMedia.
-    const stored = await storeCompetitorMedia(sourceUrl, {
+    const stored = await storeCompetitorMedia(effectiveUrl, {
       orgId,
       externalId: cc.externalId,
       kind: 'video',
@@ -89,7 +95,7 @@ export async function POST(req: NextRequest) {
       action: 'competitor.video_store',
       targetType: 'CompetitorCreative',
       targetId: cc.id,
-      metadata: { externalId: cc.externalId, bytes: stored.bytes, contentType: stored.contentType, host: new URL(sourceUrl).host },
+      metadata: { externalId: cc.externalId, bytes: stored.bytes, contentType: stored.contentType, host: new URL(effectiveUrl).host },
       req,
     })
 
