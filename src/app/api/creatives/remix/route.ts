@@ -160,6 +160,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // History/queue: the remix "job" record IS the Creative(source:'remix') we persist,
+  // so past remixes are queryable without a separate model. ?list=1 → recent remixes.
+  if (req.nextUrl.searchParams.get('list')) {
+    try {
+      const remixes = await prisma.creative.findMany({
+        where: { orgId: org.id, source: 'remix' },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+        select: { id: true, name: true, status: true, fileUrl: true, reviewStatus: true, sourceRef: true, createdAt: true },
+      })
+      return NextResponse.json({ remixes })
+    } catch {
+      return NextResponse.json({ error: 'Failed to load remixes' }, { status: 500 })
+    }
+  }
+
   const creativeId = req.nextUrl.searchParams.get('creativeId')
   const assetId = req.nextUrl.searchParams.get('assetId')
   if (!creativeId || !assetId) {
