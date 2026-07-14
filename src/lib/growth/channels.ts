@@ -101,3 +101,65 @@ export function resolveChannel(input: {
 
   return { channel: CHANNELS.ORGANIC, confidence: src ? 'inferred' : 'deterministic' }
 }
+
+// ── Adjust (MMP) network → channel mapping ──────────────────────────────
+// Adjust callbacks report `network_name` (and `campaign_name`), not our
+// adex_{arm} UTM convention — resolveChannel() doesn't recognize these names
+// and would bucket them all into organic (the "channel norm失配" hole,
+// docs/growth/06-mmp-ingest.md §1 hole 2). This is a separate, explicit table
+// so resolveChannel's own UTM-first contract stays untouched.
+//
+// Adjust's `network_name` doesn't distinguish web vs iOS-app-install for
+// Meta/TikTok — both surface as e.g. "Facebook Installs" / "Instagram
+// Installs". We conservatively map these to the *_ios (SKAN) channel, the
+// lower-trust/lower-confidence bucket, since Adjust is an app-install MMP and
+// most orgs wiring it up are attributing native app installs, not the web
+// funnel. If `campaignName` carries a recognizable hint (e.g. contains "web"),
+// we prefer that signal over the network-name default. This is a documented
+// approximation — revisit if a customer's actual Adjust setup differs.
+export const ADJUST_NETWORK_MAP: Record<string, Channel> = {
+  'apple search ads': CHANNELS.PAID_ASA,
+  'facebook installs': CHANNELS.PAID_META_IOS,
+  'facebook ads': CHANNELS.PAID_META_IOS,
+  'instagram installs': CHANNELS.PAID_META_IOS,
+  'meta installs': CHANNELS.PAID_META_IOS,
+  'tiktok installs': CHANNELS.PAID_TIKTOK_IOS,
+  'tiktok for business': CHANNELS.PAID_TIKTOK_IOS,
+  'google ads': CHANNELS.PAID_GOOGLE_UAC,
+  'google installs': CHANNELS.PAID_GOOGLE_UAC,
+  organic: CHANNELS.ORGANIC,
+}
+
+/**
+ * Resolve an Adjust `network_name` (+ optional `campaign_name`) to a canonical
+ * channel. Case-insensitive on network name. Unmapped networks fall back to
+ * organic with `inferred` confidence (never throws, never silently mis-buckets
+ * as a paid channel).
+ */
+export function resolveAdjustChannel(
+  networkName?: string | null,
+  campaignName?: string | null,
+): { channel: Channel; confidence: Confidence } {
+  const network = (networkName ?? '').trim().toLowerCase()
+  const campaign = (campaignName ?? '').trim().toLowerCase()
+
+  const mapped = ADJUST_NETWORK_MAP[network]
+  if (!mapped) {
+    return { channel: CHANNELS.ORGANIC, confidence: 'inferred' }
+  }
+
+  // Meta/TikTok network names are app-install-only in our table (mapped to the
+  // *_ios SKAN channel); if the campaign name explicitly signals a web-funnel
+  // campaign, prefer that over the app-install default.
+  if (mapped === CHANNELS.PAID_META_IOS && campaign.includes('web')) {
+    return { channel: CHANNELS.PAID_META_WEB, confidence: 'inferred' }
+  }
+  if (mapped === CHANNELS.PAID_TIKTOK_IOS && campaign.includes('web')) {
+    return { channel: CHANNELS.PAID_TIKTOK_WEB, confidence: 'inferred' }
+  }
+
+  if (mapped === CHANNELS.PAID_ASA) return { channel: mapped, confidence: 'deterministic' }
+  if (isSkanChannel(mapped)) return { channel: mapped, confidence: 'skan' }
+  if (mapped === CHANNELS.ORGANIC) return { channel: mapped, confidence: 'deterministic' }
+  return { channel: mapped, confidence: 'inferred' }
+}

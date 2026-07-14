@@ -6,7 +6,7 @@ import { CHANNELS } from './channels'
 const D = (iso: string) => new Date(iso)
 
 function ev(p: Partial<RawEvent> & Pick<RawEvent, 'eventName' | 'occurredAt'>): RawEvent {
-  return { userKey: 'u1', channel: null, revenue: 0, ...p }
+  return { userKey: 'u1', channel: null, revenue: 0, source: 'ga4', ...p }
 }
 
 describe('dayKey', () => {
@@ -83,5 +83,58 @@ describe('buildCohortSnapshots', () => {
     const rows = buildCohortSnapshots(events, { spendByCohort: spend })
     expect(rows[0].cac).toBeCloseTo(10) // $20 / 2 installs
     expect(buildCohortSnapshots(events)[0].cac).toBeNull()
+  })
+
+  it('single install-source authority: same real install reported by GA4 + Adjust under different userKey namespaces does not double-count (decision A)', () => {
+    const events: RawEvent[] = [
+      // Same physical device/user, but GA4 and Adjust can't be joined (decision B) —
+      // they land as two distinct userKeys.
+      ev({
+        userKey: 'ga4-pseudo-1',
+        eventName: EVENTS.INSTALL,
+        occurredAt: D('2026-07-01T08:00:00Z'),
+        channel: CHANNELS.ORGANIC,
+        source: 'ga4',
+      }),
+      ev({
+        userKey: 'adjust:abc123',
+        eventName: EVENTS.INSTALL,
+        occurredAt: D('2026-07-01T08:05:00Z'),
+        channel: CHANNELS.PAID_ASA,
+        source: 'adjust',
+      }),
+    ]
+    // Without an authority, both userKeys place a cohort row each — the hole.
+    expect(buildCohortSnapshots(events).reduce((s, r) => s + r.installs, 0)).toBe(2)
+
+    // With Adjust as install authority, the GA4 install is excluded from
+    // acquisition placement (that userKey has no other acquisition event, so
+    // it drops out entirely) — only the Adjust-attributed install counts.
+    const rows = buildCohortSnapshots(events, { installAuthority: 'adjust' })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ installs: 1, channel: CHANNELS.PAID_ASA })
+  })
+
+  it('installAuthority never filters funnel-deep/revenue events, only acquisition events', () => {
+    const rows = buildCohortSnapshots(
+      [
+        ev({
+          userKey: 'adjust:abc123',
+          eventName: EVENTS.INSTALL,
+          occurredAt: D('2026-07-01T08:00:00Z'),
+          channel: CHANNELS.PAID_ASA,
+          source: 'adjust',
+        }),
+        // Adjust doesn't report first_chat — it arrives from GA4, must still count.
+        ev({
+          userKey: 'adjust:abc123',
+          eventName: EVENTS.FIRST_CHAT,
+          occurredAt: D('2026-07-01T09:00:00Z'),
+          source: 'ga4',
+        }),
+      ],
+      { installAuthority: 'adjust' },
+    )
+    expect(rows[0]).toMatchObject({ installs: 1, activated: 1 })
   })
 })

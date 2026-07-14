@@ -1,0 +1,80 @@
+/**
+ * Adjust S2S callback → ConversionEvent mapping (pure).
+ *
+ * Adjust's real-time callback is a URL template Adjust expands per-event and
+ * GETs/POSTs to us — see docs/growth/06-mmp-ingest.md §3. Only `install` and
+ * mapped `event` activity kinds are funnel-relevant; everything else
+ * (`reattribution`, `session`, unmapped event tokens) is dropped, not thrown,
+ * so a misconfigured callback never 500s the route.
+ *
+ * userKey (decision B, 06-mmp-ingest.md §2): prefer the RC `app_user_id`
+ * transmitted as an Adjust partner parameter (customer must configure this in
+ * their Adjust dashboard so it's forwarded on the callback). If absent, we
+ * fall back to `adjust:${adid}` — a namespaced id that intentionally does NOT
+ * join with GA4 pseudo ids or RC app_user_ids. Cohort-level consequences of
+ * that downgrade are documented in cohorts.ts / kpi-canon.ts.
+ *
+ * Ref: docs/growth/06-mmp-ingest.md §1 hole 3, §2 decision B, §3
+ */
+
+import { EVENTS, SOURCES, type ConversionEventInput, type EventName } from './events'
+import { resolveAdjustChannel } from './channels'
+
+/** Adjust `event_token` → our canonical EventName. Unmapped tokens are dropped. */
+export type AdjustEventTokenMap = Record<string, EventName>
+
+export interface AdjustCallbackParams {
+  activity_kind?: string
+  event_token?: string
+  network_name?: string
+  campaign_name?: string
+  adid?: string
+  /** unix seconds, as Adjust sends it. */
+  created_at?: string
+  country?: string
+  /** RC app_user_id transmitted as a partner parameter (decision B). */
+  app_user_id?: string
+  [key: string]: string | undefined
+}
+
+/**
+ * Map one Adjust S2S callback request to a normalized ConversionEventInput, or
+ * null if it isn't funnel-relevant (unmapped activity_kind / event_token,
+ * missing timestamp).
+ */
+export function mapAdjustCallback(
+  params: AdjustCallbackParams,
+  eventTokenMap: AdjustEventTokenMap = {},
+): ConversionEventInput | null {
+  const activityKind = params.activity_kind?.trim().toLowerCase()
+
+  let eventName: EventName | undefined
+  if (activityKind === 'install') {
+    eventName = EVENTS.INSTALL
+  } else if (activityKind === 'event') {
+    const token = params.event_token
+    eventName = token ? eventTokenMap[token] : undefined
+  }
+  // 'reattribution', 'session', and anything else are not in our funnel
+  // vocabulary — drop, don't guess.
+  if (!eventName) return null
+
+  const createdAtSec = Number(params.created_at)
+  if (!Number.isFinite(createdAtSec) || createdAtSec <= 0) return null
+
+  const userKey = params.app_user_id?.trim() || (params.adid ? `adjust:${params.adid}` : null)
+
+  const { channel } = resolveAdjustChannel(params.network_name, params.campaign_name)
+
+  return {
+    source: SOURCES.ADJUST,
+    eventName,
+    occurredAt: new Date(createdAtSec * 1000),
+    userKey,
+    utmCampaign: params.campaign_name ?? null,
+    channel,
+    country: params.country ?? null,
+    revenue: 0,
+    raw: params,
+  }
+}

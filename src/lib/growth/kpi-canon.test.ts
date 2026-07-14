@@ -13,6 +13,7 @@ import {
   realizedLtv,
   projectSubscriberLtv,
   kFactor,
+  resolveInstallAuthority,
 } from './kpi-canon'
 
 describe('rate metrics', () => {
@@ -90,5 +91,41 @@ describe('kFactor carries a confidence flag', () => {
   })
   it('flags measured once attribution ready', () => {
     expect(kFactor(30, 300, true).confidence).toBe('measured')
+  })
+})
+
+describe('resolveInstallAuthority — decision A + anti-zeroing guard', () => {
+  it('no Adjust auth → GA4 is authority', () => {
+    expect(
+      resolveInstallAuthority({ hasAdjustAuth: false, adjustInstallCount: 0, ga4InstallCount: 50 }),
+    ).toEqual({ authority: 'ga4', fallback: false })
+  })
+  it('S2S-only org (no legacy credential, live adjust events) → Adjust is authority', () => {
+    // The recommended setup wires only the callback route — the legacy
+    // Report-API credential must not be a precondition for authority.
+    expect(
+      resolveInstallAuthority({ hasAdjustAuth: false, adjustInstallCount: 40, ga4InstallCount: 50 }),
+    ).toEqual({ authority: 'adjust', fallback: false })
+  })
+  it('Adjust auth configured and reporting installs → Adjust is authority', () => {
+    expect(
+      resolveInstallAuthority({ hasAdjustAuth: true, adjustInstallCount: 40, ga4InstallCount: 50 }),
+    ).toEqual({ authority: 'adjust', fallback: false })
+  })
+  it('anti-zeroing: Adjust configured but 0 installs in window while GA4 has signal → falls back to GA4 with a warning', () => {
+    const r = resolveInstallAuthority({ hasAdjustAuth: true, adjustInstallCount: 0, ga4InstallCount: 30 })
+    expect(r.authority).toBe('ga4')
+    expect(r.fallback).toBe(true)
+    expect(r.warning).toMatch(/adjust/i)
+  })
+  it('does not fall back when both sources are legitimately 0', () => {
+    expect(
+      resolveInstallAuthority({ hasAdjustAuth: true, adjustInstallCount: 0, ga4InstallCount: 0 }),
+    ).toEqual({ authority: 'adjust', fallback: false })
+  })
+  it('does not fall back when the authority source has installs, even if lower than the other', () => {
+    expect(
+      resolveInstallAuthority({ hasAdjustAuth: true, adjustInstallCount: 5, ga4InstallCount: 100 }),
+    ).toEqual({ authority: 'adjust', fallback: false })
   })
 })

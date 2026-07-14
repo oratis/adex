@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyCronAuth } from '@/lib/cron-auth'
 import { prisma } from '@/lib/prisma'
 import { buildCohortSnapshots, type RawEvent } from '@/lib/growth/cohorts'
-import { EVENTS, type EventName } from '@/lib/growth/events'
+import { EVENTS, SOURCES, type EventName } from '@/lib/growth/events'
+import { resolveInstallAuthority } from '@/lib/growth/kpi-canon'
 
 /**
  * POST /api/cron/growth-sync
@@ -28,12 +29,12 @@ export async function POST(req: NextRequest) {
   const cutoff = new Date(Date.now() - WINDOW_DAYS * 86_400_000)
   const orgs = await prisma.organization.findMany({ select: { id: true } })
 
-  const summary: Array<{ orgId: string; cohorts: number; events: number }> = []
+  const summary: Array<{ orgId: string; cohorts: number; events: number; installAuthority?: string; installAuthorityWarning?: string }> = []
 
   for (const org of orgs) {
     const rows = await prisma.conversionEvent.findMany({
       where: { orgId: org.id, occurredAt: { gte: cutoff } },
-      select: { eventName: true, occurredAt: true, userKey: true, channel: true, revenue: true },
+      select: { eventName: true, occurredAt: true, userKey: true, channel: true, revenue: true, source: true },
     })
 
     const events: RawEvent[] = rows
@@ -44,9 +45,29 @@ export async function POST(req: NextRequest) {
         userKey: r.userKey,
         channel: r.channel,
         revenue: r.revenue,
+        source: r.source,
       }))
 
-    const cohorts = buildCohortSnapshots(events)
+    // Install authority (decision A, docs/growth/06-mmp-ingest.md §2): if the
+    // org has Adjust wired, Adjust's install events are authoritative and the
+    // GA4 install rows for the same window are excluded from cohort placement
+    // (see cohorts.ts). The anti-zeroing guard in resolveInstallAuthority falls
+    // back to GA4 if Adjust is configured but reported 0 installs this window.
+    const hasAdjustAuth = await prisma.platformAuth.findUnique({
+      where: { orgId_platform: { orgId: org.id, platform: 'adjust' } },
+    }).then((a) => !!a?.isActive).catch(() => false)
+    const adjustInstallCount = events.filter((e) => e.eventName === EVENTS.INSTALL && e.source === SOURCES.ADJUST).length
+    const ga4InstallCount = events.filter((e) => e.eventName === EVENTS.INSTALL && e.source === SOURCES.GA4).length
+    const installAuthorityResult = resolveInstallAuthority({
+      hasAdjustAuth,
+      adjustInstallCount,
+      ga4InstallCount,
+    })
+    if (installAuthorityResult.warning) {
+      console.warn(`[growth-sync] org=${org.id} ${installAuthorityResult.warning}`)
+    }
+
+    const cohorts = buildCohortSnapshots(events, { installAuthority: installAuthorityResult.authority })
 
     // Idempotent recompute: clear the window, then insert fresh.
     await prisma.cohortSnapshot.deleteMany({
@@ -72,7 +93,13 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    summary.push({ orgId: org.id, cohorts: cohorts.length, events: events.length })
+    summary.push({
+      orgId: org.id,
+      cohorts: cohorts.length,
+      events: events.length,
+      installAuthority: installAuthorityResult.authority,
+      ...(installAuthorityResult.warning ? { installAuthorityWarning: installAuthorityResult.warning } : {}),
+    })
   }
 
   return NextResponse.json({ ok: true, window: `${WINDOW_DAYS}d`, orgs: summary })
