@@ -139,9 +139,12 @@ const row = (over: Partial<BreakdownRow> = {}): BreakdownRow => ({
   clicks: 100,
   spend: 50,
   cpc: 0.5,
-  funnelSignups: null,
-  funnelSubscribers: null,
-  funnelJoin: 'pending',
+  signups: null,
+  costPerSignup: null,
+  d1Rate: null,
+  d7Rate: null,
+  d0Roi: null,
+  d7Roi: null,
   ...over,
 })
 
@@ -204,6 +207,46 @@ describe('aggregateBreakdownRows', () => {
   it('cpc is null when clicks sum to 0', () => {
     const rows = [row({ clicks: 0, spend: 10 })]
     expect(aggregateBreakdownRows(rows, 'x')[0].cpc).toBeNull()
+  })
+
+  it('sums signups across joined rows and recomputes costPerSignup from the sums', () => {
+    const rows = [
+      row({ date: '2026-07-01', spend: 50, signups: 10, costPerSignup: 5 }),
+      row({ date: '2026-07-02', spend: 60, signups: 20, costPerSignup: 3 }),
+    ]
+    const agg = aggregateBreakdownRows(rows, 'x')
+    expect(agg[0].signups).toBe(30)
+    expect(agg[0].costPerSignup).toBeCloseTo(110 / 30)
+  })
+
+  it('signups/costPerSignup stay null when no row in the group joined', () => {
+    const rows = [row({ signups: null, costPerSignup: null })]
+    expect(aggregateBreakdownRows(rows, 'x')[0].signups).toBeNull()
+    expect(aggregateBreakdownRows(rows, 'x')[0].costPerSignup).toBeNull()
+  })
+
+  it('mixed joined/unjoined group: costPerSignup uses joined-days spend only', () => {
+    // Day 1 joined ($50 spend, 10 signups); day 2 did NOT join ($60 spend,
+    // signups unknown). Total spend still reports $110, but costPerSignup
+    // must be 50/10 — dividing all-days spend by joined-only signups would
+    // inflate it to 11 (the funnelJoin:'partial' silent-failure bug).
+    const rows = [
+      row({ date: '2026-07-01', spend: 50, signups: 10, costPerSignup: 5 }),
+      row({ date: '2026-07-02', spend: 60, signups: null, costPerSignup: null }),
+    ]
+    const agg = aggregateBreakdownRows(rows, 'x')[0]
+    expect(agg.spend).toBe(110)
+    expect(agg.signups).toBe(10)
+    expect(agg.costPerSignup).toBeCloseTo(5)
+  })
+
+  it('d1Rate/d7Rate/d0Roi/d7Roi are always null in aggregate mode (not re-derivable across dates)', () => {
+    const rows = [row({ d1Rate: 0.3, d7Rate: 0.2, d0Roi: 1.1, d7Roi: 1.4 })]
+    const agg = aggregateBreakdownRows(rows, 'x')[0]
+    expect(agg.d1Rate).toBeNull()
+    expect(agg.d7Rate).toBeNull()
+    expect(agg.d0Roi).toBeNull()
+    expect(agg.d7Roi).toBeNull()
   })
 })
 

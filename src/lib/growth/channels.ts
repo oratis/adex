@@ -163,3 +163,30 @@ export function resolveAdjustChannel(
   if (mapped === CHANNELS.ORGANIC) return { channel: mapped, confidence: 'deterministic' }
   return { channel: mapped, confidence: 'inferred' }
 }
+
+// ── CohortSnapshot.channel → Report.platform bridge (bi §7) ────────────────
+// Report rows carry a bare ad-platform string (google/meta/tiktok/...), not a
+// Channel — this is the inverse direction of PLATFORM_TO_CHANNEL
+// (src/app/api/cron/growth-sync/route.ts), used by /api/reports/breakdown to
+// join spend rows back to CohortSnapshot funnel rows on (date, os, platform,
+// agency). Earned channels (organic/kol/referral/seo/aso) have no
+// corresponding ad platform and correctly map to null — they never join.
+const CHANNEL_TO_PLATFORM: Partial<Record<Channel, string>> = {
+  [CHANNELS.PAID_GOOGLE_UAC]: 'google',
+  [CHANNELS.PAID_META_WEB]: 'meta',
+  [CHANNELS.PAID_META_IOS]: 'meta',
+  [CHANNELS.PAID_TIKTOK_WEB]: 'tiktok',
+  [CHANNELS.PAID_TIKTOK_IOS]: 'tiktok',
+  [CHANNELS.PAID_ASA]: 'apple_search_ads',
+}
+
+/**
+ * Resolve a CohortSnapshot channel to the Report.platform string it can join
+ * against. Earned/organic channels and any channel this map doesn't cover
+ * return `null` — they don't participate in the funnel↔spend join, they're
+ * not "joined to zero".
+ */
+export function channelToPlatform(channel: string): string | null {
+  if (!isChannel(channel)) return null
+  return CHANNEL_TO_PLATFORM[channel] ?? null
+}

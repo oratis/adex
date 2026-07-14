@@ -8,7 +8,11 @@
  * doesn't own" convention, applied to the funnel-join-pending breakdown cols).
  */
 
-import { cpc as calcCpc, costPerSignup as calcCostPerSignup, costPerPayingUser as calcCostPerPayingUser } from '@/lib/growth/kpi-canon'
+import {
+  cpc as calcCpc,
+  costPerSignup as calcCostPerSignup,
+  costPerPayingUser as calcCostPerPayingUser,
+} from '@/lib/growth/kpi-canon'
 
 // ───────────────────────────── date range ─────────────────────────────
 
@@ -213,6 +217,13 @@ export const visibleKeys = (fields: FieldToggle[]): string[] => fields.filter((f
 
 // ───────────────────────────── breakdown table: client-side filter + aggregation ─────────────────────────────
 
+/**
+ * A row from GET /api/reports/breakdown. The funnel columns (signups through
+ * d7Roi) are real numbers when this row's (date, os, platform, agency) key
+ * joined a CohortSnapshot bucket (bi §7 funnel↔spend bridge), and `null` when
+ * it didn't — see the route's `funnelJoin` response field (response-level,
+ * not per-row) for the aggregate join-hit signal driving the "pending" banner.
+ */
 export interface BreakdownRow {
   date: string
   os: string | null
@@ -222,9 +233,12 @@ export interface BreakdownRow {
   clicks: number
   spend: number
   cpc: number | null
-  funnelSignups: number | null
-  funnelSubscribers: number | null
-  funnelJoin: 'pending' | string
+  signups: number | null
+  costPerSignup: number | null
+  d1Rate: number | null
+  d7Rate: number | null
+  d0Roi: number | null
+  d7Roi: number | null
 }
 
 /** Distinct, non-empty values for `key` across `rows`, sorted ascending. Used to populate dynamic filter options. */
@@ -255,28 +269,58 @@ export interface AggregatedBreakdownRow {
   clicks: number
   spend: number
   cpc: number | null
-  funnelJoin: 'pending'
+  signups: number | null
+  costPerSignup: number | null
+  // Rate columns (d1Rate/d7Rate/d0Roi/d7Roi) are NOT re-derivable once
+  // collapsed across dates — the API doesn't return the retained/base
+  // denominators needed to weight a correct blended rate, and averaging
+  // already-derived per-day rates would misrepresent the true rate (same
+  // reasoning as summarizeSummaryRows's totals row). aggregateBreakdownRows
+  // always returns null for these; the type stays `number | null` (rather
+  // than a `null` literal) so daily-mode rows — which DO carry real
+  // per-day rates — fit the same display-row shape in _client.tsx.
+  d1Rate: number | null
+  d7Rate: number | null
+  d0Roi: number | null
+  d7Roi: number | null
 }
 
 /**
  * Collapses the date dimension: groups by os|platform|agency and sums
- * impressions/clicks/spend, recomputing cpc from the summed totals (never
- * averaging already-derived per-day cpc values). `rangeLabel` is the
- * "区间" string shown in the date column (see formatDateRangeLabel).
+ * impressions/clicks/spend/signups, recomputing cpc and costPerSignup from
+ * the summed totals (never averaging already-derived per-day values).
+ * `rangeLabel` is the "区间" string shown in the date column (see
+ * formatDateRangeLabel).
  */
 export function aggregateBreakdownRows(rows: BreakdownRow[], rangeLabel: string): AggregatedBreakdownRow[] {
-  type Agg = { os: string | null; platform: string; agency: string | null; impressions: number; clicks: number; spend: number }
+  type Agg = {
+    os: string | null
+    platform: string
+    agency: string | null
+    impressions: number
+    clicks: number
+    spend: number
+    signups: number
+    /** Spend from joined rows only — the valid costPerSignup denominator's twin. */
+    joinedSpend: number
+    hasSignups: boolean
+  }
   const groups = new Map<string, Agg>()
   for (const r of rows) {
     const key = `${r.os ?? ''}|${r.platform}|${r.agency ?? ''}`
     let g = groups.get(key)
     if (!g) {
-      g = { os: r.os, platform: r.platform, agency: r.agency, impressions: 0, clicks: 0, spend: 0 }
+      g = { os: r.os, platform: r.platform, agency: r.agency, impressions: 0, clicks: 0, spend: 0, signups: 0, joinedSpend: 0, hasSignups: false }
       groups.set(key, g)
     }
     g.impressions += r.impressions
     g.clicks += r.clicks
     g.spend += r.spend
+    if (r.signups !== null) {
+      g.signups += r.signups
+      g.joinedSpend += r.spend
+      g.hasSignups = true
+    }
   }
   return [...groups.values()]
     .map((g) => ({
@@ -288,7 +332,15 @@ export function aggregateBreakdownRows(rows: BreakdownRow[], rangeLabel: string)
       clicks: g.clicks,
       spend: g.spend,
       cpc: calcCpc(g.spend, g.clicks),
-      funnelJoin: 'pending' as const,
+      signups: g.hasSignups ? g.signups : null,
+      // Divide joined-days spend by joined-days signups — mixing all-days
+      // spend with joined-only signups (funnelJoin:'partial') silently
+      // inflates the KPI, same reason the rate columns below stay null.
+      costPerSignup: g.hasSignups ? calcCostPerSignup(g.joinedSpend, g.signups) : null,
+      d1Rate: null,
+      d7Rate: null,
+      d0Roi: null,
+      d7Roi: null,
     }))
     .sort((x, y) => (x.platform === y.platform ? (x.agency ?? '').localeCompare(y.agency ?? '') : x.platform.localeCompare(y.platform)))
 }

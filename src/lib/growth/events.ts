@@ -69,5 +69,9 @@ export interface ConversionEventInput {
   os?: Os | null
   country?: string | null
   revenue?: number
+  /** Campaign-name-derived dimensions (docs/growth/06-mmp-ingest.md §7). */
+  agency?: string | null
+  bidStrategy?: string | null
+  conversionGoal?: string | null
   raw?: unknown
 }

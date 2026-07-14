@@ -16,7 +16,7 @@ import { isChannel, isPaidChannel, type Channel } from '@/lib/growth/channels'
 import { isOs } from '@/lib/growth/events'
 
 /**
- * GET /api/growth/summary?start&end&os&source(paid|organic)&channel
+ * GET /api/growth/summary?start&end&os&source(paid|organic)&channel&agency
  *
  * bi §6 (docs/growth/06-mmp-ingest.md §6) — per-os × paid/organic funnel
  * summary rolled up from CohortSnapshot. `source` buckets a row's channel via
@@ -24,6 +24,10 @@ import { isOs } from '@/lib/growth/events'
  * CohortSnapshot.channel is always written from our own taxonomy, but the
  * column has no DB-level enum) is conservatively bucketed as organic rather
  * than thrown away.
+ *
+ * `agency` (bi §7) is query-level filtering only — the summary bucket is
+ * still os×source, NOT further split by agency (that's the breakdown
+ * endpoint's job).
  *
  * `trialToPaidRateApprox` is an approximation, not a cohort-matched trial
  * conversion rate: it's subscribers/trials within the SAME filtered window,
@@ -45,6 +49,7 @@ export async function GET(req: NextRequest) {
   const osFilter = url.searchParams.get('os')
   const sourceFilter = url.searchParams.get('source')
   const channelFilter = url.searchParams.get('channel')
+  const agencyFilter = url.searchParams.get('agency')
 
   if (osFilter && !isOs(osFilter)) {
     return NextResponse.json({ error: 'invalid os — must be ios|android|web' }, { status: 400 })
@@ -71,6 +76,7 @@ export async function GET(req: NextRequest) {
       ...(start || end ? { cohortDate } : {}),
       ...(osFilter ? { os: osFilter } : {}),
       ...(channelFilter ? { channel: channelFilter } : {}),
+      ...(agencyFilter ? { agency: agencyFilter } : {}),
     },
   })
 

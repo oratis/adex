@@ -235,6 +235,100 @@ export function kFactor(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Cohort-window aggregation — shared by /api/growth/summary and
+// /api/reports/breakdown (bi §7 funnel↔spend bridge) so the D1/D7 maturity
+// gate and the funnel-metric formulas live in exactly one place.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The subset of CohortSnapshot fields needed to fold into a window aggregate. */
+export interface CohortWindowRow {
+  /** 'YYYY-MM-DD' (UTC) — CohortSnapshot.cohortDate's day key. */
+  cohortDate: string
+  installs: number
+  signups: number
+  d1Retained: number
+  d7Retained: number
+  revenueD0: number
+  revenueD7: number
+}
+
+export interface CohortWindowAgg {
+  /** installs + signups across all folded rows — the "acquired users" base. */
+  cohortSize: number
+  signups: number
+  /** D1-retained numerator/denominator, gated by isMatureForRetentionWindow. */
+  d1: number
+  d1Base: number
+  /** D7-retained numerator/denominator, gated by isMatureForRetentionWindow. */
+  d7: number
+  d7Base: number
+  revenueD0: number
+  revenueD7: number
+}
+
+/**
+ * Fold cohort-snapshot-shaped rows into window aggregates, applying the D1/D7
+ * maturity gate so a cohort whose D_N day hasn't happened yet doesn't dilute
+ * the rate denominator (see isMatureForRetentionWindow's doc comment). Pure —
+ * `now` defaults to `new Date()` but is a parameter for deterministic tests.
+ */
+export function aggregateCohortWindow(rows: CohortWindowRow[], now: Date = new Date()): CohortWindowAgg {
+  const agg: CohortWindowAgg = { cohortSize: 0, signups: 0, d1: 0, d1Base: 0, d7: 0, d7Base: 0, revenueD0: 0, revenueD7: 0 }
+  for (const r of rows) {
+    const cohortSize = r.installs + r.signups
+    agg.cohortSize += cohortSize
+    agg.signups += r.signups
+    agg.revenueD0 += r.revenueD0
+    agg.revenueD7 += r.revenueD7
+    if (isMatureForRetentionWindow(r.cohortDate, 1, now)) {
+      agg.d1 += r.d1Retained
+      agg.d1Base += cohortSize
+    }
+    if (isMatureForRetentionWindow(r.cohortDate, 7, now)) {
+      agg.d7 += r.d7Retained
+      agg.d7Base += cohortSize
+    }
+  }
+  return agg
+}
+
+export interface FunnelMetricsInput {
+  /** Actual media spend for this bucket (e.g. Report.spend, not CAC-derived). */
+  spend: number
+  signups: number
+  d1Retained: number
+  d1Base: number
+  d7Retained: number
+  d7Base: number
+  revenueD0: number
+  revenueD7: number
+}
+
+export interface FunnelMetricsResult {
+  costPerSignup: number | null
+  d1Rate: number
+  d7Rate: number
+  d0Roi: number | null
+  d7Roi: number | null
+}
+
+/**
+ * Derive the funnel-metric columns (bi §6/§7) from a cohort-window aggregate
+ * plus a known spend figure. Pure composition of the formulas above — the
+ * single place both /api/growth/summary and /api/reports/breakdown compute
+ * these so the two views can never drift.
+ */
+export function computeFunnelMetrics(input: FunnelMetricsInput): FunnelMetricsResult {
+  return {
+    costPerSignup: costPerSignup(input.spend, input.signups),
+    d1Rate: retentionRate(input.d1Retained, input.d1Base),
+    d7Rate: retentionRate(input.d7Retained, input.d7Base),
+    d0Roi: roi(input.revenueD0, input.spend),
+    d7Roi: roi(input.revenueD7, input.spend),
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Install authority — decision A (docs/growth/06-mmp-ingest.md §2)
 // ─────────────────────────────────────────────────────────────────────────
 

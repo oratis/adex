@@ -93,6 +93,10 @@ export default function DashboardClient() {
   const [breakdownLoading, setBreakdownLoading] = useState(true)
   const [breakdownError, setBreakdownError] = useState(false)
   const [breakdownMode, setBreakdownMode] = useState<'daily' | 'aggregate'>('daily')
+  // Response-level join signal (bi §7) — NOT per-row. 'full' means every
+  // report-side group joined the funnel; the "pending" header hint only
+  // shows when it's not 'full'.
+  const [breakdownFunnelJoin, setBreakdownFunnelJoin] = useState<'full' | 'partial' | 'none'>('none')
 
   useEffect(() => {
     setSummaryLoading(true)
@@ -121,6 +125,7 @@ export default function DashboardClient() {
       .then((d) => {
         setBreakdownRows(Array.isArray(d.rows) ? d.rows : [])
         setBreakdownHasData(!!d.hasData)
+        setBreakdownFunnelJoin(d.funnelJoin === 'full' || d.funnelJoin === 'partial' ? d.funnelJoin : 'none')
       })
       .catch(() => setBreakdownError(true))
       .finally(() => setBreakdownLoading(false))
@@ -206,7 +211,10 @@ export default function DashboardClient() {
   }
 
   // ── breakdown table columns ──
-  const pendingTitle = t('bi.col.pending_title')
+  // The pending hint only makes sense while the funnel bridge hasn't joined
+  // everything (bi §7) — a fully-joined response has real numbers in every
+  // row, so the "pending" title would be misleading.
+  const pendingTitle = breakdownFunnelJoin !== 'full' ? t('bi.col.pending_title') : undefined
   const breakdownColumns: DataTableColumn<AggregatedBreakdownRow & { date?: string }>[] = [
     {
       key: 'date',
@@ -220,12 +228,12 @@ export default function DashboardClient() {
     { key: 'clicks', label: t('bi.col.clicks'), align: 'right', format: (r) => formatCountOrDash(r.clicks) },
     { key: 'spend', label: t('bi.col.spend'), align: 'right', format: (r) => formatMoneyOrDash(r.spend) },
     { key: 'cpc', label: t('bi.col.cpc'), align: 'right', format: (r) => formatMoneyOrDash(r.cpc) },
-    { key: 'signups', label: t('bi.col.signups'), align: 'right', title: pendingTitle, format: () => '—' },
-    { key: 'costPerSignup', label: t('bi.col.cost_per_signup'), align: 'right', title: pendingTitle, format: () => '—' },
-    { key: 'd1Rate', label: t('bi.col.d1_rate'), align: 'right', title: pendingTitle, format: () => '—' },
-    { key: 'd7Rate', label: t('bi.col.d7_rate'), align: 'right', title: pendingTitle, format: () => '—' },
-    { key: 'd0Roi', label: t('bi.col.d0_roi'), align: 'right', title: pendingTitle, format: () => '—' },
-    { key: 'd7Roi', label: t('bi.col.d7_roi'), align: 'right', title: pendingTitle, format: () => '—' },
+    { key: 'signups', label: t('bi.col.signups'), align: 'right', title: pendingTitle, format: (r) => formatCountOrDash(r.signups) },
+    { key: 'costPerSignup', label: t('bi.col.cost_per_signup'), align: 'right', title: pendingTitle, format: (r) => formatMoneyOrDash(r.costPerSignup) },
+    { key: 'd1Rate', label: t('bi.col.d1_rate'), align: 'right', title: pendingTitle, format: (r) => formatPercentOrDash(r.d1Rate) },
+    { key: 'd7Rate', label: t('bi.col.d7_rate'), align: 'right', title: pendingTitle, format: (r) => formatPercentOrDash(r.d7Rate) },
+    { key: 'd0Roi', label: t('bi.col.d0_roi'), align: 'right', title: pendingTitle, format: (r) => formatRoiOrDash(r.d0Roi) },
+    { key: 'd7Roi', label: t('bi.col.d7_roi'), align: 'right', title: pendingTitle, format: (r) => formatRoiOrDash(r.d7Roi) },
   ]
 
   const breakdownDisplayRows: (AggregatedBreakdownRow & { date?: string })[] =
@@ -241,7 +249,12 @@ export default function DashboardClient() {
           clicks: r.clicks,
           spend: r.spend,
           cpc: r.cpc,
-          funnelJoin: 'pending' as const,
+          signups: r.signups,
+          costPerSignup: r.costPerSignup,
+          d1Rate: r.d1Rate,
+          d7Rate: r.d7Rate,
+          d0Roi: r.d0Roi,
+          d7Roi: r.d7Roi,
         }))
 
   // ── legacy widgets state (unchanged data source: /api/reports, /api/campaigns) ──

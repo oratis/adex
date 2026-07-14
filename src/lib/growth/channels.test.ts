@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CHANNELS, isChannel, isPaidChannel, isSkanChannel, resolveChannel, resolveAdjustChannel } from './channels'
+import { CHANNELS, isChannel, isPaidChannel, isSkanChannel, resolveChannel, resolveAdjustChannel, channelToPlatform } from './channels'
 
 describe('channel classification', () => {
   it('paid channels are flagged, earned are not', () => {
@@ -97,5 +97,27 @@ describe('resolveAdjustChannel — MMP network_name mapping', () => {
   })
   it('explicit organic network is deterministic', () => {
     expect(resolveAdjustChannel('organic')).toEqual({ channel: CHANNELS.ORGANIC, confidence: 'deterministic' })
+  })
+})
+
+describe('channelToPlatform — bi §7 funnel↔spend join key', () => {
+  it('maps paid channels to their ad-platform string', () => {
+    expect(channelToPlatform(CHANNELS.PAID_GOOGLE_UAC)).toBe('google')
+    expect(channelToPlatform(CHANNELS.PAID_META_WEB)).toBe('meta')
+    expect(channelToPlatform(CHANNELS.PAID_META_IOS)).toBe('meta')
+    expect(channelToPlatform(CHANNELS.PAID_TIKTOK_WEB)).toBe('tiktok')
+    expect(channelToPlatform(CHANNELS.PAID_TIKTOK_IOS)).toBe('tiktok')
+    expect(channelToPlatform(CHANNELS.PAID_ASA)).toBe('apple_search_ads')
+  })
+  it('earned/organic channels have no ad platform — null, not guessed', () => {
+    expect(channelToPlatform(CHANNELS.ORGANIC)).toBeNull()
+    expect(channelToPlatform(CHANNELS.KOL)).toBeNull()
+    expect(channelToPlatform(CHANNELS.REFERRAL)).toBeNull()
+    expect(channelToPlatform(CHANNELS.SEO)).toBeNull()
+    expect(channelToPlatform(CHANNELS.ASO)).toBeNull()
+  })
+  it('unrecognized channel strings are null, never throw', () => {
+    expect(channelToPlatform('not_a_channel')).toBeNull()
+    expect(channelToPlatform('')).toBeNull()
   })
 })

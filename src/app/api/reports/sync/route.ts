@@ -7,7 +7,7 @@ import { AmazonAdsClient } from '@/lib/platforms/amazon'
 import { LinkedInAdsClient } from '@/lib/platforms/linkedin'
 import type { PlatformAuth } from '@/generated/prisma/client'
 import { getAdapter, isAdaptablePlatform } from '@/lib/platforms/registry'
-import { runAdapterSync } from '@/lib/sync/report-writer'
+import { runAdapterSync, resolveReportAgency } from '@/lib/sync/report-writer'
 
 type SyncMetrics = {
   impressions: number
@@ -38,19 +38,6 @@ function derived(m: SyncMetrics) {
     cpa: m.conversions > 0 ? m.spend / m.conversions : 0,
     roas: m.spend > 0 ? m.revenue / m.spend : 0,
   }
-}
-
-/**
- * Media-buying agency of record for a platform, when one is on file
- * (PlatformAccount.agency). Reads the primary account row for the platform;
- * orgs without a PlatformAccount row at all (legacy single-token auth) or
- * without an agency set simply get `null` — never guessed.
- */
-async function resolveReportAgency(orgId: string, platform: string): Promise<string | null> {
-  const account = await prisma.platformAccount.findFirst({
-    where: { orgId, platform, isPrimary: true },
-  })
-  return account?.agency ?? null
 }
 
 async function upsertReport(

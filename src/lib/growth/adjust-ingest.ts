@@ -8,8 +8,9 @@
  * so a misconfigured callback never 500s the route.
  *
  * userKey (decision B, 06-mmp-ingest.md §2): prefer the RC `app_user_id`
- * transmitted as an Adjust partner parameter (customer must configure this in
- * their Adjust dashboard so it's forwarded on the callback). If absent, we
+ * transmitted as an Adjust callback parameter — NOT a partner parameter, those go
+ * to ad networks; callback params come back on raw-data callbacks (AF analogue:
+ * customer_user_id/CUID). Set via SDK after registration. If absent, we
  * fall back to `adjust:${adid}` — a namespaced id that intentionally does NOT
  * join with GA4 pseudo ids or RC app_user_ids. Cohort-level consequences of
  * that downgrade are documented in cohorts.ts / kpi-canon.ts.
@@ -19,6 +20,7 @@
 
 import { EVENTS, SOURCES, type ConversionEventInput, type EventName, type Os } from './events'
 import { resolveAdjustChannel } from './channels'
+import { parseCampaignName } from './campaign-name'
 
 /** Adjust `event_token` → our canonical EventName. Unmapped tokens are dropped. */
 export type AdjustEventTokenMap = Record<string, EventName>
@@ -32,7 +34,7 @@ export interface AdjustCallbackParams {
   /** unix seconds, as Adjust sends it. */
   created_at?: string
   country?: string
-  /** RC app_user_id transmitted as a partner parameter (decision B). */
+  /** RC app_user_id transmitted as a callback parameter (decision B). */
   app_user_id?: string
   /** Adjust standard placeholder — "ios" | "android" (native SDK installs). */
   os_name?: string
@@ -80,7 +82,15 @@ export function mapAdjustCallback(
 
   const userKey = params.app_user_id?.trim() || (params.adid ? `adjust:${params.adid}` : null)
 
+  // channel stays authoritative from network_name (resolveAdjustChannel) —
+  // the campaign-name parse below is only consulted for os fallback and the
+  // agency/bidStrategy/conversionGoal dimensions it uniquely owns (bi §7).
   const { channel } = resolveAdjustChannel(params.network_name, params.campaign_name)
+  const parsedName = parseCampaignName(params.campaign_name)
+
+  // os is authoritative from Adjust's own os_name/device_type fields;
+  // campaign-name-derived os is only a fallback when both are absent.
+  const os = normalizeAdjustOs(params) ?? parsedName?.os ?? null
 
   return {
     source: SOURCES.ADJUST,
@@ -89,9 +99,12 @@ export function mapAdjustCallback(
     userKey,
     utmCampaign: params.campaign_name ?? null,
     channel,
-    os: normalizeAdjustOs(params),
+    os,
     country: params.country ?? null,
     revenue: 0,
+    agency: parsedName?.agency ?? null,
+    bidStrategy: parsedName?.bidStrategy ?? null,
+    conversionGoal: parsedName?.goal ?? null,
     raw: params,
   }
 }

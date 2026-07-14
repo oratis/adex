@@ -62,6 +62,12 @@ export function parseIncomingEvent(raw: unknown): ConversionEventInput | null {
     os,
     country: str(r.country),
     revenue,
+    // agency (bi §7): the backend generally doesn't have one to send (Adjust's
+    // campaign-name parse is the primary source) — only trusted if explicitly
+    // provided, never inferred here. Normalized like every other producer of
+    // this dimension (parseCampaignName lowercases) so the funnel join's
+    // exact string match can't miss on case.
+    agency: str(r.agency)?.trim().toLowerCase() || undefined,
     raw,
   }
 }
