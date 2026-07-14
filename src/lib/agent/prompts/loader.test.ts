@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { describe, it, expect } from 'vitest'
 import { orgBucket, renderPrompt } from './loader'
 
@@ -35,6 +36,21 @@ describe('orgBucket', () => {
       expect(c).toBeGreaterThan(70)
       expect(c).toBeLessThan(130)
     }
+  })
+})
+
+describe('plan.v1.md template shape', () => {
+  // plan.ts splits the template on this marker for prompt caching: everything
+  // before it is the stable (cached) half and gets empty vars. Volatile data
+  // slots must therefore sit AFTER the marker or they silently render empty.
+  it('keeps volatile placeholders after the cache-split marker', async () => {
+    const template = await readFile(new URL('./plan.v1.md', import.meta.url), 'utf-8')
+    const splitIdx = template.indexOf('## Recent decisions')
+    expect(splitIdx).toBeGreaterThan(0)
+    for (const slot of ['{{RECENT_DECISIONS_JSON}}', '{{GUARDRAIL_HINTS}}', '{{GROWTH_JSON}}', '{{CAMPAIGNS_JSON}}']) {
+      expect(template.indexOf(slot)).toBeGreaterThan(splitIdx)
+    }
+    expect(template.indexOf('{{TOOL_CATALOG_JSON}}')).toBeLessThan(splitIdx)
   })
 })
 

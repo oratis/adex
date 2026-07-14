@@ -7,6 +7,14 @@
  */
 import { prisma } from '@/lib/prisma'
 import type { ProposedDecisionStep, ToolDefinition } from './types'
+import {
+  evaluatePilotBudget,
+  tierCacCeiling,
+  withinCacCeiling,
+  LEARNING_PHASE_DAYS,
+  LEARNING_PHASE_HARD_MULTIPLE,
+} from '@/lib/growth/budget-guard'
+import { FIRST_MONTH_NET_DEFAULT } from '@/lib/growth/pilot-gates'
 
 export type GuardrailEvalResult = {
   pass: boolean
@@ -321,6 +329,213 @@ const evaluators: Record<string, GuardrailEvaluator> = {
     }
     return { pass: true, rule: 'requires_approval_above_spend' }
   },
+
+  /**
+   * Growth pilot ($5K cap) — hard org-wide spend ceiling for any step that
+   * increases spend. Inert unless an org explicitly sets `pilotStartDate` in
+   * this rule's config (there is no default pilotStartDate) — this keeps
+   * existing non-pilot customers unaffected. See src/lib/growth/budget-guard.ts.
+   */
+  pilot_budget_cap: async (ctx, config) => {
+    if (!isSpendIncreaseTool(ctx.step)) return { pass: true, rule: 'pilot_budget_cap' }
+    const cfg = (config || {}) as { pilotStartDate?: string; capTotal?: number }
+    if (!cfg.pilotStartDate) return { pass: true, rule: 'pilot_budget_cap' }
+    const since = new Date(cfg.pilotStartDate)
+    // level:'account' — sync writes BOTH an account-level row (the contract,
+    // one per platform per day) AND best-effort per-campaign rows for the
+    // same spend (src/lib/sync/report-writer.ts). Summing all levels double-
+    // counts and trips the cap at ~half real spend.
+    const reports = await prisma.report.findMany({
+      where: { orgId: ctx.orgId, level: 'account', date: { gte: since } },
+      select: { spend: true },
+    })
+    const cumulativeSpend = reports.reduce((s, r) => s + r.spend, 0)
+    const result = evaluatePilotBudget({ cumulativeSpend, capTotal: cfg.capTotal })
+    if (result.action === 'auto_pause') {
+      return {
+        pass: false,
+        rule: 'pilot_budget_cap',
+        reason: `pilot spend ${(result.pct * 100).toFixed(0)}% of cap: ${result.reasons.join('; ')}`,
+        config,
+      }
+    }
+    if (result.action === 'warn') {
+      return {
+        pass: true,
+        rule: 'pilot_budget_cap',
+        reason: `pilot spend ${(result.pct * 100).toFixed(0)}% of cap: ${result.reasons.join('; ')}`,
+      }
+    }
+    return { pass: true, rule: 'pilot_budget_cap' }
+  },
+
+  /**
+   * SKAN-attributed iOS install channels (meta/tiktok app_install) have
+   * delayed, low-trust attribution for the first 72h, and are only
+   * "learning phase" quality through day 7. Reject automated adjustments on
+   * a too-young campaign; warn (don't block) during the learning window
+   * unless spend is running away.
+   */
+  skan_maturity: async (ctx, _config) => {
+    const skanTools = new Set([
+      'adjust_bid',
+      'adjust_daily_budget',
+      'adjust_targeting_geo',
+      'adjust_targeting_demo',
+      'enable_smart_bidding',
+    ])
+    if (!skanTools.has(ctx.step.tool)) return { pass: true, rule: 'skan_maturity' }
+    const cid = (ctx.step.input as Record<string, unknown>).campaignId
+    if (typeof cid !== 'string') return { pass: true, rule: 'skan_maturity' }
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: cid, orgId: ctx.orgId },
+      select: { platform: true, objective: true, startDate: true },
+    })
+    if (!campaign) return { pass: true, rule: 'skan_maturity' }
+    const channel = deriveSkanChannel(campaign.platform, campaign.objective)
+    if (!channel) return { pass: true, rule: 'skan_maturity' }
+
+    if (!campaign.startDate) {
+      return {
+        pass: false,
+        rule: 'skan_maturity',
+        reason: 'campaign startDate unknown — cannot verify SKAN maturity',
+      }
+    }
+    const ageHours = (Date.now() - campaign.startDate.getTime()) / 3_600_000
+    const ageDays = ageHours / 24
+
+    if (ageHours < 72) {
+      return {
+        pass: false,
+        rule: 'skan_maturity',
+        reason: `campaign age ${ageHours.toFixed(1)}h < 72h — SKAN data untrusted`,
+      }
+    }
+
+    if (ageDays <= LEARNING_PHASE_DAYS) {
+      const budget = await prisma.budget.findFirst({
+        where: { campaignId: cid, type: 'daily' },
+        orderBy: { createdAt: 'desc' },
+      })
+      if (!budget) {
+        return {
+          pass: false,
+          rule: 'skan_maturity',
+          reason: 'no daily budget on record to verify learning-phase spend',
+        }
+      }
+      const startOfToday = new Date()
+      startOfToday.setUTCHours(0, 0, 0, 0)
+      const todayReports = await prisma.report.findMany({
+        where: { campaignId: cid, date: { gte: startOfToday } },
+        select: { spend: true },
+      })
+      const spendToday = todayReports.reduce((s, r) => s + r.spend, 0)
+      const multiple = budget.amount > 0 ? spendToday / budget.amount : 0
+      if (multiple > LEARNING_PHASE_HARD_MULTIPLE) {
+        return {
+          pass: false,
+          rule: 'skan_maturity',
+          reason: `learning-phase spend ${multiple.toFixed(1)}x daily cap > ${LEARNING_PHASE_HARD_MULTIPLE}x`,
+        }
+      }
+      return {
+        pass: true,
+        rule: 'skan_maturity',
+        reason: `campaign in learning phase (day ${ageDays.toFixed(1)}) — proceed with caution`,
+      }
+    }
+
+    return { pass: true, rule: 'skan_maturity' }
+  },
+
+  /**
+   * Reject bid/budget increases whose channel's most recent CohortSnapshot
+   * CAC exceeds the tier ceiling (firstMonthNet × SCALE_PAYBACK_MULTIPLE).
+   * Not fail-closed: missing CohortSnapshot data is a "don't know", not a
+   * violation, so it never blocks.
+   */
+  tier_cac_ceiling: async (ctx, config) => {
+    if (ctx.step.tool !== 'adjust_bid' && ctx.step.tool !== 'adjust_daily_budget')
+      return { pass: true, rule: 'tier_cac_ceiling' }
+    if (!isSpendIncreaseTool(ctx.step)) return { pass: true, rule: 'tier_cac_ceiling' }
+    const cfg = (config || {}) as { firstMonthNet?: number }
+    const cid = (ctx.step.input as Record<string, unknown>).campaignId
+    if (typeof cid !== 'string') return { pass: true, rule: 'tier_cac_ceiling' }
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: cid, orgId: ctx.orgId },
+      select: { platform: true, objective: true },
+    })
+    if (!campaign) return { pass: true, rule: 'tier_cac_ceiling' }
+    const channel = deriveSkanChannel(campaign.platform, campaign.objective)
+    if (!channel) return { pass: true, rule: 'tier_cac_ceiling' }
+
+    const snapshot = await prisma.cohortSnapshot.findFirst({
+      where: { orgId: ctx.orgId, channel },
+      orderBy: { cohortDate: 'desc' },
+    })
+    if (!snapshot || snapshot.cac == null) {
+      return {
+        pass: true,
+        rule: 'tier_cac_ceiling',
+        reason: `no CohortSnapshot data for channel ${channel} — cannot verify CAC ceiling`,
+      }
+    }
+    const firstMonthNet = cfg.firstMonthNet ?? FIRST_MONTH_NET_DEFAULT
+    const ceiling = tierCacCeiling(firstMonthNet)
+    if (!withinCacCeiling(snapshot.cac, ceiling)) {
+      return {
+        pass: false,
+        rule: 'tier_cac_ceiling',
+        reason: `CAC $${snapshot.cac.toFixed(2)} > tier ceiling $${ceiling.toFixed(2)} (channel ${channel})`,
+        config,
+      }
+    }
+    return { pass: true, rule: 'tier_cac_ceiling' }
+  },
+}
+
+/**
+ * True for tools that increase spend, used by pilot_budget_cap and
+ * tier_cac_ceiling. Conservative: if a "previous" value isn't present to
+ * compare against, treat it as an increase.
+ */
+function isSpendIncreaseTool(step: ProposedDecisionStep): boolean {
+  const input = step.input as Record<string, unknown>
+  switch (step.tool) {
+    case 'adjust_daily_budget': {
+      const next = Number(input.newDailyBudget)
+      const prev = Number(input.previousDailyBudget)
+      if (!Number.isFinite(next)) return false
+      if (!Number.isFinite(prev)) return true
+      return next > prev
+    }
+    case 'adjust_bid': {
+      const next = Number(input.newBidUsd)
+      const prev = Number(input.previousBidUsd)
+      if (!Number.isFinite(next)) return false
+      if (!Number.isFinite(prev)) return true
+      return next > prev
+    }
+    case 'resume_campaign':
+    case 'enable_smart_bidding':
+    case 'clone_campaign':
+      return true
+    default:
+      return false
+  }
+}
+
+/**
+ * Map Campaign(platform, objective) to the growth channel taxonomy's two
+ * SKAN-attributed iOS channels. Returns null for anything else — those
+ * campaigns aren't SKAN and this rule doesn't apply.
+ */
+function deriveSkanChannel(platform: string, objective: string | null): 'paid_meta_ios' | 'paid_tiktok_ios' | null {
+  if (platform === 'meta' && objective === 'app_install') return 'paid_meta_ios'
+  if (platform === 'tiktok' && objective === 'app_install') return 'paid_tiktok_ios'
+  return null
 }
 
 type BuiltinDef = { rule: string; config: unknown; failClosed?: boolean }
@@ -337,6 +552,9 @@ const BUILTIN_DEFAULTS: BuiltinDef[] = [
   { rule: 'cooldown', config: { hours: 4 } },
   { rule: 'pause_only_with_conversions', config: { minSpendThreshold: 50, minImpressionsForSignal: 2000 } },
   { rule: 'max_per_day', config: { max: 20 } },
+  { rule: 'pilot_budget_cap', config: {}, failClosed: true },
+  { rule: 'skan_maturity', config: {}, failClosed: true },
+  { rule: 'tier_cac_ceiling', config: {}, failClosed: false },
 ]
 
 const FAIL_CLOSED_RULES = new Set(

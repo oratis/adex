@@ -165,6 +165,7 @@ export async function plan(
     TOOL_CATALOG_JSON: JSON.stringify(toolCatalogForPrompt(), null, 2),
     RECENT_DECISIONS_JSON: '',
     GUARDRAIL_HINTS: '',
+    GROWTH_JSON: '',
     CAMPAIGNS_JSON: '',
   })
   const volatileBody = renderPrompt(split.volatileMarker, {
@@ -174,6 +175,9 @@ export async function plan(
       snapshot.guardrailHints.length === 0
         ? '(none configured — only built-in defaults apply)'
         : snapshot.guardrailHints.join('\n'),
+    GROWTH_JSON: snapshot.growth
+      ? JSON.stringify(snapshot.growth, null, 2)
+      : '(none — no growth/cohort data for this org)',
     CAMPAIGNS_JSON: JSON.stringify(snapshot.campaigns, null, 2),
   })
 

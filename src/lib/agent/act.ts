@@ -1,8 +1,9 @@
 import { prisma } from '@/lib/prisma'
 import { fireWebhook } from '@/lib/webhooks'
 import { getTool } from './tools'
-import { evaluateGuardrails, isBlocked } from './guardrails'
+import { evaluateGuardrails, isBlocked, type GuardrailEvalResult } from './guardrails'
 import { notifyApprovers } from './notify'
+import { logAudit } from '@/lib/audit'
 import type {
   AgentMode,
   PlanResult,
@@ -150,6 +151,14 @@ export async function executeApprovedDecision(
   })
   if (!decision) throw new Error(`Decision ${decisionId} not found`)
 
+  // Rollback detection: both rollback routes (decisions/[id]/rollback and
+  // decisions/bulk-rollback) stamp every inverse DecisionStep's `rollbackOf`
+  // with the source step id it reverses (see prisma schema DecisionStep.
+  // rollbackOf) and record `{ rollbackOf: original.id }` in the rollback
+  // Decision's perceiveContext. `rollbackOf` on the steps we already loaded
+  // is the simplest reliable per-Decision signal — no extra query needed.
+  const isRollback = decision.steps.some((s) => s.rollbackOf != null)
+
   await prisma.decision.update({
     where: { id: decisionId },
     data: { status: 'executing', executedAt: new Date() },
@@ -200,6 +209,55 @@ export async function executeApprovedDecision(
       continue
     }
 
+    // Re-check guardrails immediately before execution — the shared choke
+    // point for every path that reaches executeApprovedDecision (approvals,
+    // approvals/bulk, rollback, bulk-rollback, slack/interactive). State can
+    // have changed since processOne's original evaluation (e.g. approval sat
+    // pending for hours), so we can't trust the stored guardrailReport alone.
+    const freshResults = await evaluateGuardrails({
+      orgId,
+      step: { tool: step.toolName, input: JSON.parse(step.toolInput) },
+      tool,
+    })
+
+    // Rollback exemption: rolling back restores a previous (already
+    // guardrail-passed-once) state, so blocking a rollback on the pilot
+    // budget cap or CAC ceiling would strand the system in a bad state with
+    // no way back — those two are excluded from the blocking check entirely
+    // during rollback. skan_maturity's concern about touching an
+    // immature-data campaign still deserves a visible warning even during
+    // rollback, so its result is kept in the report but never allowed to
+    // block.
+    const blockingResults: GuardrailEvalResult[] = isRollback
+      ? freshResults.filter((r) => r.rule !== 'pilot_budget_cap' && r.rule !== 'tier_cac_ceiling' && r.rule !== 'skan_maturity')
+      : freshResults
+
+    if (isBlocked(blockingResults)) {
+      const failed = freshResults.filter((r) => !r.pass)
+      await prisma.decisionStep.update({
+        where: { id: step.id },
+        data: {
+          status: 'blocked',
+          toolOutput: JSON.stringify({ blocked: true, guardrails: freshResults }),
+          guardrailReport: JSON.stringify(freshResults),
+        },
+      })
+      anyFailed = true
+      await logAudit({
+        orgId,
+        action: 'advisor.apply',
+        targetType: 'decision_step',
+        targetId: step.id,
+        metadata: {
+          result: 'blocked_at_execution',
+          decisionId,
+          rule: failed.map((r) => r.rule),
+          reasons: failed.map((r) => r.reason),
+        },
+      })
+      continue
+    }
+
     const ctx: ToolContext = { orgId, decisionId, stepIndex: step.stepIndex, mode }
     let result: ToolResult
     try {
@@ -215,6 +273,10 @@ export async function executeApprovedDecision(
         platformResponse: result.ok && result.platformResponse ? JSON.stringify(result.platformResponse) : null,
         platformLinkId: result.ok && result.platformLinkId ? result.platformLinkId : null,
         executedAt: new Date(),
+        // Persist the execution-time re-check on the success path too — warn-
+        // level signals (learning phase, 80%-of-cap) would otherwise be lost,
+        // leaving only the stale proposal-time report on the row.
+        guardrailReport: JSON.stringify(freshResults),
       },
     })
     if (!result.ok) anyFailed = true

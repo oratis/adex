@@ -1,3 +1,8 @@
+/**
+ * Legacy Report-only path: date×pid aggregates into `Report` for /dashboard.
+ * Do NOT feed this into ConversionEvent — for cohort-grade ingestion the same
+ * prerequisites as Adjust apply (docs/growth/06-mmp-ingest.md §4).
+ */
 export interface AppsFlyerConfig {
   apiToken: string
   appId: string
