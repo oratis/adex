@@ -40,17 +40,33 @@ function derived(m: SyncMetrics) {
   }
 }
 
+/**
+ * Media-buying agency of record for a platform, when one is on file
+ * (PlatformAccount.agency). Reads the primary account row for the platform;
+ * orgs without a PlatformAccount row at all (legacy single-token auth) or
+ * without an agency set simply get `null` — never guessed.
+ */
+async function resolveReportAgency(orgId: string, platform: string): Promise<string | null> {
+  const account = await prisma.platformAccount.findFirst({
+    where: { orgId, platform, isPrimary: true },
+  })
+  return account?.agency ?? null
+}
+
 async function upsertReport(
   orgId: string,
   userId: string,
   platform: string,
   date: Date,
   metrics: SyncMetrics,
-  raw: unknown
+  raw: unknown,
+  extra: { os?: string | null; agency?: string | null } = {}
 ) {
   const endDateStr = date.toISOString().split('T')[0]
   const reportId = `${platform}-${orgId}-${endDateStr}`
   const d = derived(metrics)
+  const os = extra.os ?? null
+  const agency = extra.agency ?? null
 
   await prisma.report.upsert({
     where: { id: reportId },
@@ -62,6 +78,8 @@ async function upsertReport(
       revenue: metrics.revenue,
       installs: metrics.installs,
       ...d,
+      os,
+      agency,
       rawData: JSON.stringify(raw),
     },
     create: {
@@ -77,6 +95,8 @@ async function upsertReport(
       revenue: metrics.revenue,
       installs: metrics.installs,
       ...d,
+      os,
+      agency,
       rawData: JSON.stringify(raw),
     },
   })
@@ -136,11 +156,15 @@ async function syncAppsFlyer(
   // Conversions on install side = installs
   metrics.conversions = metrics.installs
 
-  await upsertReport(orgId, userId, 'appsflyer', today, metrics, {
-    rows: data.length,
-    startDate,
-    endDate,
-  })
+  await upsertReport(
+    orgId,
+    userId,
+    'appsflyer',
+    today,
+    metrics,
+    { rows: data.length, startDate, endDate },
+    { agency: await resolveReportAgency(orgId, 'appsflyer') }
+  )
   return { success: true, rows: data.length, ...metrics }
 }
 
@@ -182,11 +206,15 @@ async function syncAdjust(
   }
   metrics.conversions = metrics.installs
 
-  await upsertReport(orgId, userId, 'adjust', today, metrics, {
-    rows: rows.length,
-    startDate,
-    endDate,
-  })
+  await upsertReport(
+    orgId,
+    userId,
+    'adjust',
+    today,
+    metrics,
+    { rows: rows.length, startDate, endDate },
+    { agency: await resolveReportAgency(orgId, 'adjust') }
+  )
   return { success: true, rows: rows.length, ...metrics }
 }
 
@@ -223,7 +251,7 @@ async function syncAmazon(
 
   const agg = await client.getAggregatedReport(startDate, endDate)
   const metrics = { ...emptyMetrics(), ...agg }
-  await upsertReport(orgId, userId, 'amazon', today, metrics, { startDate, endDate })
+  await upsertReport(orgId, userId, 'amazon', today, metrics, { startDate, endDate }, { agency: await resolveReportAgency(orgId, 'amazon') })
   return { success: true, ...metrics }
 }
 
@@ -248,7 +276,7 @@ async function syncLinkedIn(
 
   const agg = await client.getAggregatedReport(startDate, endDate)
   const metrics = { ...emptyMetrics(), ...agg }
-  await upsertReport(orgId, userId, 'linkedin', today, metrics, { startDate, endDate })
+  await upsertReport(orgId, userId, 'linkedin', today, metrics, { startDate, endDate }, { agency: await resolveReportAgency(orgId, 'linkedin') })
   return { success: true, ...metrics }
 }
 

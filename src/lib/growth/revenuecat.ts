@@ -13,7 +13,7 @@
  * Ref: docs/growth/00-cuddler-first-redesign.md §5.1
  */
 
-import { EVENTS, SOURCES, type ConversionEventInput, type EventName } from './events'
+import { EVENTS, SOURCES, type ConversionEventInput, type EventName, type Os } from './events'
 
 function asNumber(x: unknown): number {
   if (typeof x === 'number' && Number.isFinite(x)) return x
@@ -26,6 +26,28 @@ function asNumber(x: unknown): number {
 
 function asString(x: unknown): string | null {
   return typeof x === 'string' && x.length > 0 ? x : null
+}
+
+/**
+ * RC's `event.store` (app_store | mac_app_store | play_store | amazon |
+ * stripe | rc_billing | promotional) tells us which storefront the purchase
+ * went through — a reasonable OS proxy since RC has no device OS field of
+ * its own. Conservative mapping (bi §6): only the three stores we can place
+ * confidently; everything else (amazon, promotional, unknown) is left null
+ * rather than guessed.
+ */
+function osFromStore(store: string | null): Os | null {
+  switch (store) {
+    case 'app_store':
+      return 'ios'
+    case 'play_store':
+      return 'android'
+    case 'stripe':
+    case 'rc_billing':
+      return 'web'
+    default:
+      return null
+  }
 }
 
 /**
@@ -74,6 +96,7 @@ export function mapRevenueCatEvent(payload: unknown): ConversionEventInput | nul
   const tsMs = asNumber(e.event_timestamp_ms) || asNumber(e.purchased_at_ms)
   if (!tsMs) return null
   const userKey = asString(e.app_user_id) ?? asString(e.original_app_user_id)
+  const store = asString(e.store)?.toLowerCase() ?? null
 
   return {
     source: SOURCES.REVENUECAT,
@@ -81,6 +104,7 @@ export function mapRevenueCatEvent(payload: unknown): ConversionEventInput | nul
     occurredAt: new Date(tsMs),
     userKey,
     channel: null, // RC carries no UTM; attributed later via userKey join
+    os: osFromStore(store),
     country: asString(e.country_code),
     revenue, // gross RC-reported price; net-of-store-fee applied downstream
     raw: payload,

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
-import { activationRate, retentionRate, subscriptionRate, realizedLtv } from '@/lib/growth/kpi-canon'
+import { activationRate, retentionRate, subscriptionRate, realizedLtv, isMatureForRetentionWindow } from '@/lib/growth/kpi-canon'
 
 /**
  * GET /api/growth/overview
@@ -25,13 +25,36 @@ export async function GET() {
     orderBy: { cohortDate: 'desc' },
   })
 
-  type Agg = { installs: number; activated: number; d1: number; d7: number; trials: number; subscribers: number; revenue: number }
-  const zero = (): Agg => ({ installs: 0, activated: 0, d1: 0, d7: 0, trials: 0, subscribers: 0, revenue: 0 })
+  // `installs` here means total cohort size (install-anchored + signup-
+  // anchored users) — see kpi-canon retentionRate doc comment. d1Base/d7Base
+  // are separate, maturity-gated denominators (bi §6 D7-dilution fix): a
+  // cohort whose cohortDate+N hasn't happened yet is excluded from BOTH the
+  // numerator and denominator of that D_N rate, not counted as "not retained".
+  type Agg = {
+    installs: number
+    activated: number
+    d1: number
+    d1Base: number
+    d7: number
+    d7Base: number
+    trials: number
+    subscribers: number
+    revenue: number
+  }
+  const zero = (): Agg => ({ installs: 0, activated: 0, d1: 0, d1Base: 0, d7: 0, d7Base: 0, trials: 0, subscribers: 0, revenue: 0 })
   const add = (a: Agg, s: (typeof snaps)[number]) => {
-    a.installs += s.installs
+    const cohortSize = s.installs + s.signups
+    const cohortDateKey = s.cohortDate.toISOString().slice(0, 10)
+    a.installs += cohortSize
     a.activated += s.activated
-    a.d1 += s.d1Retained
-    a.d7 += s.d7Retained
+    if (isMatureForRetentionWindow(cohortDateKey, 1)) {
+      a.d1 += s.d1Retained
+      a.d1Base += cohortSize
+    }
+    if (isMatureForRetentionWindow(cohortDateKey, 7)) {
+      a.d7 += s.d7Retained
+      a.d7Base += cohortSize
+    }
     a.trials += s.trials
     a.subscribers += s.subscribers
     a.revenue += s.revenueToDate
@@ -50,7 +73,7 @@ export async function GET() {
     }
     add(c, s)
     if (s.cac !== null) {
-      c.spend += s.cac * s.installs
+      c.spend += s.cac * (s.installs + s.signups)
       c.hasSpend = true
     }
     if (!latest || s.computedAt > latest) latest = s.computedAt
@@ -60,8 +83,8 @@ export async function GET() {
     installs: a.installs,
     activated: a.activated,
     activationRate: activationRate(a.activated, a.installs),
-    d1Rate: retentionRate(a.d1, a.installs),
-    d7Rate: retentionRate(a.d7, a.installs),
+    d1Rate: retentionRate(a.d1, a.d1Base),
+    d7Rate: retentionRate(a.d7, a.d7Base),
     trials: a.trials,
     subscribers: a.subscribers,
     subscriptionRate: subscriptionRate(a.subscribers, a.installs),

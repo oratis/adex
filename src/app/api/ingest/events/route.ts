@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
       utmSource: e.utmSource ?? null,
       utmCampaign: e.utmCampaign ?? null,
       channel: e.channel ?? null,
+      os: e.os ?? null,
       country: e.country ?? null,
       revenue: e.revenue ?? 0,
       raw: JSON.stringify(e.raw ?? e),

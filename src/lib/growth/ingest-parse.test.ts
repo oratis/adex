@@ -44,3 +44,18 @@ describe('parseIncomingEvents', () => {
     expect(parseIncomingEvents([{ source: 'ga4', eventName: 'install', occurredAt: at }])).toHaveLength(1)
   })
 })
+
+describe('parseIncomingEvent — os (bi §6)', () => {
+  it('accepts an explicit valid os value', () => {
+    const r = parseIncomingEvent({ source: 'ga4', eventName: 'install', occurredAt: at, os: 'ios' })
+    expect(r?.os).toBe('ios')
+  })
+  it('drops an invalid os value to null rather than passing it through', () => {
+    const r = parseIncomingEvent({ source: 'ga4', eventName: 'install', occurredAt: at, os: 'windows' })
+    expect(r?.os).toBeNull()
+  })
+  it('defaults os to null when absent', () => {
+    const r = parseIncomingEvent({ source: 'ga4', eventName: 'install', occurredAt: at })
+    expect(r?.os).toBeNull()
+  })
+})

@@ -14,6 +14,11 @@ import {
   projectSubscriberLtv,
   kFactor,
   resolveInstallAuthority,
+  isMatureForRetentionWindow,
+  costPerSignup,
+  roi,
+  arpu,
+  arppu,
 } from './kpi-canon'
 
 describe('rate metrics', () => {
@@ -127,5 +132,40 @@ describe('resolveInstallAuthority — decision A + anti-zeroing guard', () => {
     expect(
       resolveInstallAuthority({ hasAdjustAuth: true, adjustInstallCount: 5, ga4InstallCount: 100 }),
     ).toEqual({ authority: 'adjust', fallback: false })
+  })
+})
+
+describe('isMatureForRetentionWindow — bi §6 D7-dilution gate', () => {
+  // Day N itself counts retention events across its full 24h (dayDiff === N),
+  // so maturity begins only when day N has ENDED: cohortDate + N + 1, UTC.
+  it('is mature once the whole of day cohortDate + N has elapsed', () => {
+    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-09T00:00:00.000Z'))).toBe(true)
+    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-09T00:00:00.001Z'))).toBe(true)
+  })
+  it('is immature during day cohortDate + N — that day is still collecting events', () => {
+    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-08T00:00:00.000Z'))).toBe(false)
+    expect(isMatureForRetentionWindow('2026-07-01', 7, new Date('2026-07-08T23:59:59.999Z'))).toBe(false)
+  })
+  it('D1 matures a day earlier than D7', () => {
+    const now = new Date('2026-07-03T00:00:00.000Z')
+    expect(isMatureForRetentionWindow('2026-07-01', 1, now)).toBe(true)
+    expect(isMatureForRetentionWindow('2026-07-01', 7, now)).toBe(false)
+  })
+})
+
+describe('bi §6 summary metrics', () => {
+  it('costPerSignup = spend / signups, null when no signups', () => {
+    expect(costPerSignup(100, 20)).toBeCloseTo(5)
+    expect(costPerSignup(100, 0)).toBeNull()
+  })
+  it('roi = revenue / spend, null when spend is 0', () => {
+    expect(roi(150, 100)).toBeCloseTo(1.5)
+    expect(roi(150, 0)).toBeNull()
+  })
+  it('arpu / arppu return 0 (not NaN) on zero denominator', () => {
+    expect(arpu(100, 0)).toBe(0)
+    expect(arppu(100, 0)).toBe(0)
+    expect(arpu(100, 50)).toBeCloseTo(2)
+    expect(arppu(100, 10)).toBeCloseTo(10)
   })
 })

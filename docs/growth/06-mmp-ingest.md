@@ -50,3 +50,21 @@
 | 改：口径记录 | `src/lib/growth/kpi-canon.ts`（`resolveInstallAuthority`，+ 测试）、本文件 §2 | 已完成 |
 | 不动 | `src/lib/platforms/adjust.ts` / `appsflyer.ts`、`reports/sync`、`/api/ingest/events` 鉴权、`ingest-parse.ts`（`source='adjust'` 已注册） | 按计划不动 |
 | 未实现 | AppsFlyer S2S 接入（§4 仍是规划，非本次范围） | 待办 |
+
+## 6. 注册锚点与 BI 口径（已拍板）
+
+新增 `os`（ios/android/web）与分端 BI 视图，逼着我们把"获客锚点到底是谁"钉死——之前 cohort 锚点隐含"install 优先"，signup 只是 install 缺失时的兜底；现在反过来：**signup 优先**，因为它是我们自己的一方事件，不参与 GA4/MMP 双源撞车问题。
+
+- **获客锚点**：用户的 cohort 锚点 = 该用户**首个 signup 事件**（任意 source，`installAuthority` 从不过滤 signup——它只管 install 候选集）。若用户没有 signup，退回其**首个满足 installAuthority 的 install 事件**作为锚点；两者都没有则该用户不进任何 cohort。锚点所在的 UTC 自然日 = cohort 日（`cohorts.ts:dayKey`）。
+- **channel / os 归因**：一旦锚定，channel 和 os 优先取该用户"任意一条满足 installAuthority 的 install 事件"的值（MMP 归因通常比 signup 自带的 UTM 更可信），即便锚点本身是 signup。只有当用户完全没有合格的 install 事件时才退回 signup 自带的 channel/os（典型场景：纯 web 注册，从未触发任何 MMP install postback）。
+- **付费与收入窗口**：付费事件 = `subscription_activated`（不含 `renewal`）。`revenueD0` = 锚点日当天（`dayDiff(cohortDate, occurredAt) <= 0`）的 `subscription_activated` 收入；`revenueD7` = 锚点日起 7 天内（`dayDiff <= 7`）的同类收入。二者都是 `revenueToDate`（无时间上限、含 renewal）的子集，不是替代。
+- **D1/D7 完整区间 gate（读侧）**：一个 cohort 的 `cohortDate + N`（UTC）尚未到达"现在"时，它的 D_N 天生结构性为 0——不是"没留存"，是"还没到判定的那一天"。因此 `overview` / `channels` / `summary` 三个读侧路由在聚合 D_N 率之前，用 `kpi-canon.isMatureForRetentionWindow(cohortDate, N, now)` 过滤：不成熟的 cohort 既不进分子也不进分母。这修正了旧版 `overview` 把"太年轻"的 cohort 混进 D7 分母、把汇总 D7 率稀释偏低的 bug。
+- **来源=付费/自然**：由 `channels.ts:isPaidChannel(channel)` 推导，不是单独存的字段。
+- **OS 归一**：`ios | android | web` 三值（`events.ts:isOs`），前端展示层可以把 `web` 渲成 "PC"，但存储/聚合层统一叫 `web`。各连接器的推导方式：
+  - Adjust（`adjust-ingest.ts:normalizeAdjustOs`）：`os_name=ios/android` 直接映射；`os_name` 缺失时若 `device_type=web` 则判 web；其余留 `null`（不猜）。
+  - RevenueCat（`revenuecat.ts:osFromStore`）：`store` 字段保守映射——`app_store→ios`、`play_store→android`、`stripe`/`rc_billing→web`；`amazon`/`promotional`/未知 store 留 `null`。
+  - `/api/ingest/events`（`ingest-parse.ts`）：只信显式传入的 `os` 字段，且必须是合法值，否则丢弃为 `null`，不做推断。
+- **cohort 计数字段**：`CohortSnapshot.installs` 与 `.signups` 现在互斥——同一用户只落在其中一个桶（按锚点类型），`installs + signups` = 该行的锚定用户总数（对内部路由统称"cohortSize"）。旧版只有 `installs` 一个计数，语义等价于现在的 `installs + signups`——所有下游路由（`overview`/`channels`/`cohorts`/`summary`）都已改为用 `installs + signups` 作为速率分母。
+- **spend → cohort 归因（growth-sync cron）**：CAC 现在真正非 null 了——cron 按 `Report.platform → 保守 channel 映射`（`google→paid_google_uac`、`meta→paid_meta_web`、`tiktok→paid_tiktok_web`；`adjust`/`appsflyer`/`amazon`/`linkedin` 不映射，spend 计入 `summary[].unallocatedSpend`，不瞎猜）聚合 `${date}|${channel}` 花费，喂给 `buildCohortSnapshots(events, { spendByCohort })`。
+- **Report.agency / PlatformAccount.agency**：`reports/sync` 在写 appsflyer/adjust/amazon/linkedin 的 Report 行时，读取对应平台的 `PlatformAccount(orgId, platform, isPrimary=true).agency` 盖章；没有 `PlatformAccount` 行或没设 `agency` 就留 `null`，不猜。adaptor 驱动的 google/meta/tiktok 写入路径（`report-writer.ts`）本次未接入 agency 盖章——留作后续，明确不在本次范围内。
+- **`/api/reports/breakdown` 的 funnel 列**：Report 表没有可以 join 回 CohortSnapshot 的 channel/cohort key，这次只输出投放明细（impressions/clicks/spend/cpc），funnel 相关列固定返回 `null` 且 `funnelJoin: 'pending'`，避免被误读成"已 join、恰好是 0"。

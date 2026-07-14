@@ -247,6 +247,9 @@ model PlatformAccount {
   accessToken  String?
   refreshToken String?
   extra        String?  // JSON
+  // Media-buying agency of record for this account, when one exists (bi
+  // breakdown dimension). Null when the org buys direct.
+  agency       String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -407,6 +410,9 @@ model Report {
   cpc         Float    @default(0)
   cpa         Float    @default(0)
   roas        Float    @default(0)
+  // BI breakdown dimensions (bi §6). Null for platforms/rows we can't stamp.
+  os          String?  // ios | android | web — account-level MMP rows leave this null
+  agency      String?  // mirrored from PlatformAccount.agency when known
   rawData     String?  // JSON string of full API response
   createdAt   DateTime @default(now())
 
@@ -807,6 +813,7 @@ model ConversionEvent {
   utmSource   String?
   utmCampaign String?
   channel     String?  // paid_meta_web | paid_asa | kol | organic | ...
+  os          String?  // ios | android | web
   country     String?
   revenue     Float    @default(0) // net revenue for subscription events
   raw         String?  // JSON
@@ -828,20 +835,40 @@ model CohortSnapshot {
   appId         String?
   cohortDate    DateTime // acquisition day
   channel       String
+  // Anchored user's OS (ios | android | web), null when unknown/pre-dates the
+  // bi rollout. Included in the group key (bi §6) — see the null-uniqueness
+  // caveat below.
+  os            String?
   computedAt    DateTime @default(now())
   installs      Int      @default(0)
+  // Users anchored on a signup event (bi §6 acquisition-anchor rule) rather
+  // than an install — mutually exclusive with `installs` per user (a user
+  // with both a signup and an install anchors on the signup and is only
+  // counted in `signups`). installs + signups = row's anchored user count.
+  signups       Int      @default(0)
   activated     Int      @default(0) // first_chat completed
   d1Retained    Int      @default(0)
   d7Retained    Int      @default(0)
   trials        Int      @default(0)
   subscribers   Int      @default(0)
   revenueToDate Float    @default(0)
+  // Revenue windows off the cohort anchor day (bi §6): D0 = anchor day only,
+  // D7 = anchor day .. +7d inclusive. Subsets of revenueToDate.
+  revenueD0     Float    @default(0)
+  revenueD7     Float    @default(0)
   ltvEstimate   Float    @default(0)
   cac           Float?   // paid channels: spend / installs
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
-  @@unique([orgId, appId, cohortDate, channel])
+  // NOTE on null uniqueness: Postgres treats each NULL in a unique index as
+  // distinct, so multiple rows with the same (orgId, appId, cohortDate,
+  // channel, os=NULL) would NOT violate this constraint if written via
+  // upsert-by-key. We rely on the growth-sync cron's delete-then-createMany
+  // pattern (never an upsert keyed on this constraint) to stay collision-free
+  // regardless — see src/app/api/cron/growth-sync/route.ts. Same caveat
+  // already applied to `appId` before this migration; `os` follows it.
+  @@unique([orgId, appId, cohortDate, channel, os])
   @@index([orgId, cohortDate])
 }
 
