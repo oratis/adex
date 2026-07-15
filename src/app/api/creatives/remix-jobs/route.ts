@@ -19,15 +19,14 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import type { Prisma } from '@/generated/prisma/client'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import {
   buildRemixBrief,
   competitorCreativeToAnalysis,
   type ProductBrief,
-  type Ratio,
 } from '@/lib/growth/remix-brief'
+import { asJson, workerCanvasDims } from '@/lib/growth/remix-job'
 
 // Cost guardrails (mirrors /api/creatives/remix): burst limit + per-org daily cap.
 const REMIX_BURST_LIMIT = Number(process.env.REMIX_BURST_LIMIT || 20)
@@ -36,21 +35,6 @@ const REMIX_DAILY_CAP = Number(process.env.REMIX_DAILY_CAP || 50)
 // Only t0_5 is open this phase — t0/t1/t2/mixed are reserved for a later rollout.
 const SUPPORTED_TIERS = ['t0_5'] as const
 type SupportedTier = (typeof SUPPORTED_TIERS)[number]
-
-function ratioDims(ratio: Ratio): { width: number; height: number } {
-  switch (ratio) {
-    case '16:9': return { width: 1280, height: 720 }
-    case '1:1': return { width: 1080, height: 1080 }
-    case '4:3': return { width: 1440, height: 1080 }
-    case '3:4': return { width: 1080, height: 1440 }
-    case '9:16':
-    default: return { width: 720, height: 1280 }
-  }
-}
-
-function asJson(v: unknown): Prisma.InputJsonValue {
-  return v as Prisma.InputJsonValue
-}
 
 export async function POST(req: NextRequest) {
   let user, org
@@ -116,7 +100,7 @@ export async function POST(req: NextRequest) {
     }
 
     const brief = await buildRemixBrief(analysis, productBrief)
-    const dims = ratioDims(brief.ratio)
+    const dims = workerCanvasDims(brief.ratio)
 
     // Review-gated ad (the thing a human approves before any push). No render call
     // here — status stays 'generating' until the worker reports back via /report.
@@ -179,11 +163,11 @@ export async function GET(req: NextRequest) {
       if (!job) {
         return NextResponse.json({ error: 'Not found' }, { status: 404 })
       }
-      let creativeSummary: { id: string; status: string; fileUrl: string | null } | null = null
+      let creativeSummary: { id: string; status: string; fileUrl: string | null; reviewNotes: string | null } | null = null
       if (job.creativeId) {
         const creative = await prisma.creative.findFirst({
           where: { id: job.creativeId, orgId: org.id },
-          select: { id: true, status: true, fileUrl: true },
+          select: { id: true, status: true, fileUrl: true, reviewNotes: true },
         })
         if (creative) creativeSummary = creative
       }

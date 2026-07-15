@@ -11,26 +11,18 @@
  * · src/lib/growth/remix-job.ts
  */
 import { test, expect, request as pwRequest, type APIRequestContext } from '@playwright/test'
-import crypto from 'node:crypto'
+import { sign } from './helpers/hmac'
 
 // Every test in this file shares one registered user + session (register is
 // 5/hr/IP rate-limited) — run the whole file in a single worker, in order, so
 // `beforeAll` only registers once and no two workers race the same account.
 test.describe.configure({ mode: 'serial' })
 
-const PORT = process.env.PORT || '3000'
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || ''
-const BASE_URL = `http://localhost:${PORT}`
 const p = (path: string) => `${BASE_PATH}${path.startsWith('/') ? path : '/' + path}`
 
 const INGEST_SECRET = process.env.INGEST_WEBHOOK_SECRET || 'e2e-competitor-ingest-secret'
 const WORKER_SECRET = process.env.WORKER_WEBHOOK_SECRET || 'e2e-worker-secret'
-
-function sign(secret: string, payload: string) {
-  const timestamp = String(Math.floor(Date.now() / 1000))
-  const signature = `sha256=${crypto.createHmac('sha256', secret).update(`${timestamp}:${payload}`).digest('hex')}`
-  return { timestamp, signature }
-}
 
 // Minimal single-row batch — one enriched competitor creative, no media URL
 // (hermetic, no outbound fetch needed by the ingest route).
@@ -69,8 +61,8 @@ const REMIX_PRODUCT = {
 let ctx: APIRequestContext
 let orgId: string
 
-test.beforeAll(async () => {
-  ctx = await pwRequest.newContext({ baseURL: BASE_URL })
+test.beforeAll(async ({}, testInfo) => {
+  ctx = await pwRequest.newContext({ baseURL: testInfo.project.use.baseURL })
 
   const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const email = `remix-jobs-e2e-${unique}@adex-e2e.dev`
@@ -187,18 +179,54 @@ test.describe('worker/remix-jobs — claim atomicity', () => {
   })
 })
 
+/** Sign + POST a worker request; returns the raw Playwright response. */
+async function workerPost(path: string, secret: string, payload: Record<string, unknown>) {
+  const body = JSON.stringify(payload)
+  const s = sign(secret, body)
+  return ctx.post(p(path), {
+    headers: { 'content-type': 'application/json', 'x-adex-timestamp': s.timestamp, 'x-adex-signature': s.signature },
+    data: body,
+  })
+}
+
+/** Claim a job by id — asserts success and returns the response body's job. */
+async function claimJob(jobId: string) {
+  const res = await workerPost('/api/worker/remix-jobs/claim', WORKER_SECRET, { jobId })
+  expect(res.status(), await res.text()).toBe(200)
+  const json = await res.json()
+  expect(json.job).toBeTruthy()
+  return json.job
+}
+
+function canonicalOutputUrl(jobId: string) {
+  return `https://storage.googleapis.com/adex-data-gameclaw/uploads/remix/${orgId}/${jobId}.mp4`
+}
+
+/** Create + claim a job, then drive it through running→assembling→qc (all legal). */
+async function createClaimedJobAtQc() {
+  const competitorCreativeId = await ingestCompetitorCreative()
+  const createRes = await createRemixJob(competitorCreativeId)
+  const { job } = await createRes.json()
+  await claimJob(job.id)
+  for (const status of ['running', 'assembling', 'qc']) {
+    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status })
+    expect(res.status(), await res.text()).toBe(200)
+  }
+  return job as { id: string }
+}
+
 test.describe('worker/remix-jobs — report', () => {
   test('running report round-trips status + beats via GET ?id=', async () => {
     const competitorCreativeId = await ingestCompetitorCreative()
     const createRes = await createRemixJob(competitorCreativeId)
     const { job } = await createRes.json()
+    await claimJob(job.id)
 
     const beats = [{ index: 0, role: 'hook', status: 'done', seconds: 3 }]
-    const reportBody = JSON.stringify({ jobId: job.id, status: 'running', beats })
-    const rs = sign(WORKER_SECRET, reportBody)
-    const reportRes = await ctx.post(p('/api/worker/remix-jobs/report'), {
-      headers: { 'content-type': 'application/json', 'x-adex-timestamp': rs.timestamp, 'x-adex-signature': rs.signature },
-      data: reportBody,
+    const reportRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
+      jobId: job.id,
+      status: 'running',
+      beats,
     })
     expect(reportRes.status(), await reportRes.text()).toBe(200)
 
@@ -209,27 +237,15 @@ test.describe('worker/remix-jobs — report', () => {
     expect(getJson.job.beats).toEqual(beats)
   })
 
-  test('succeeded report requires outputUrl, then promotes the linked creative to ready', async () => {
-    const competitorCreativeId = await ingestCompetitorCreative()
-    const createRes = await createRemixJob(competitorCreativeId)
-    const { job } = await createRes.json()
+  test('succeeded report requires outputUrl, then promotes the linked creative to ready via the legal running→assembling→qc→succeeded sequence', async () => {
+    const job = await createClaimedJobAtQc()
 
-    // Missing outputUrl → 400
-    const missingBody = JSON.stringify({ jobId: job.id, status: 'succeeded' })
-    const ms = sign(WORKER_SECRET, missingBody)
-    const missingRes = await ctx.post(p('/api/worker/remix-jobs/report'), {
-      headers: { 'content-type': 'application/json', 'x-adex-timestamp': ms.timestamp, 'x-adex-signature': ms.signature },
-      data: missingBody,
-    })
+    // Missing outputUrl → 400 (checked before the transition, regardless of current status)
+    const missingRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'succeeded' })
     expect(missingRes.status()).toBe(400)
 
-    const outputUrl = `https://storage.googleapis.com/adex-data-gameclaw/uploads/remix/${orgId}/${job.id}.mp4`
-    const okBody = JSON.stringify({ jobId: job.id, status: 'succeeded', outputUrl })
-    const os = sign(WORKER_SECRET, okBody)
-    const okRes = await ctx.post(p('/api/worker/remix-jobs/report'), {
-      headers: { 'content-type': 'application/json', 'x-adex-timestamp': os.timestamp, 'x-adex-signature': os.signature },
-      data: okBody,
-    })
+    const outputUrl = canonicalOutputUrl(job.id)
+    const okRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'succeeded', outputUrl })
     expect(okRes.status(), await okRes.text()).toBe(200)
 
     const getRes = await ctx.get(p(`/api/creatives/remix-jobs?id=${job.id}`))
@@ -237,6 +253,55 @@ test.describe('worker/remix-jobs — report', () => {
     expect(getJson.job.status).toBe('succeeded')
     expect(getJson.job.creative.status).toBe('ready')
     expect(getJson.job.creative.fileUrl).toBe(outputUrl)
+  })
+
+  test('report after succeeded (terminal) → 409', async () => {
+    const job = await createClaimedJobAtQc()
+    const outputUrl = canonicalOutputUrl(job.id)
+    const okRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'succeeded', outputUrl })
+    expect(okRes.status(), await okRes.text()).toBe(200)
+
+    const afterRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'running' })
+    expect(afterRes.status()).toBe(409)
+    const afterJson = await afterRes.json()
+    expect(afterJson.currentStatus).toBe('succeeded')
+  })
+
+  test('succeeded report on an unclaimed pending job → 409', async () => {
+    const competitorCreativeId = await ingestCompetitorCreative()
+    const createRes = await createRemixJob(competitorCreativeId)
+    const { job } = await createRes.json()
+
+    const outputUrl = canonicalOutputUrl(job.id)
+    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'succeeded', outputUrl })
+    expect(res.status()).toBe(409)
+    const json = await res.json()
+    expect(json.currentStatus).toBe('pending')
+  })
+
+  test('succeeded report with a non-canonical outputUrl → 400', async () => {
+    const job = await createClaimedJobAtQc()
+    const badUrl = 'https://storage.googleapis.com/adex-data-gameclaw/uploads/remix/some-other-org/some-other-job.mp4'
+    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'succeeded', outputUrl: badUrl })
+    expect(res.status()).toBe(400)
+  })
+
+  test('succeeded report with qcReport pass:false still promotes the creative, but flags reviewNotes', async () => {
+    const job = await createClaimedJobAtQc()
+    const outputUrl = canonicalOutputUrl(job.id)
+    const qcReport = { pass: false, hits: [{ term: 'competitor-name', beat: 0 }] }
+    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
+      jobId: job.id,
+      status: 'succeeded',
+      outputUrl,
+      qcReport,
+    })
+    expect(res.status(), await res.text()).toBe(200)
+
+    const getRes = await ctx.get(p(`/api/creatives/remix-jobs?id=${job.id}`))
+    const getJson = await getRes.json()
+    expect(getJson.job.creative.status).toBe('ready')
+    expect(getJson.job.creative.reviewNotes).toContain('QC FAILED')
   })
 })
 

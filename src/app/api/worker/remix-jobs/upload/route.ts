@@ -36,6 +36,15 @@ export async function POST(req: NextRequest) {
   const headers = readWorkerAuthHeaders(req)
   const contentSha256 = req.headers.get('x-adex-content-sha256')
 
+  if (!headers.timestamp || !headers.signature || !contentSha256) {
+    return workerUnauthorized()
+  }
+
+  const contentLength = Number(req.headers.get('content-length'))
+  if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES) {
+    return NextResponse.json({ error: 'file too large' }, { status: 413 })
+  }
+
   const arrayBuffer = await req.arrayBuffer()
   const buffer = Buffer.from(arrayBuffer)
   if (buffer.length > MAX_UPLOAD_BYTES) {

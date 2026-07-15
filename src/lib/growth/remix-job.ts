@@ -16,7 +16,7 @@ import crypto from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { verifyHmac } from '@/lib/growth/ingest-auth'
-import type { RemixJob } from '@/generated/prisma/client'
+import type { Prisma, RemixJob } from '@/generated/prisma/client'
 
 /** Headers the worker sends on every request to /api/worker/remix-jobs/**. */
 export interface WorkerAuthHeaders {
@@ -63,4 +63,25 @@ export async function findRemixJobById(jobId: string): Promise<RemixJob | null> 
 /** Standard 404 body for an unknown jobId. */
 export function jobNotFound(): NextResponse {
   return NextResponse.json({ error: 'not found' }, { status: 404 })
+}
+
+/** Cast an arbitrary value to a Prisma JSON input — shared by every route that writes RemixJob JSON columns. */
+export function asJson(v: unknown): Prisma.InputJsonValue {
+  return v as Prisma.InputJsonValue
+}
+
+/**
+ * Canvas dimensions per storyboard ratio — this is the actual canvas the
+ * worker renders to, so Creative.width/height must be derived from this (not
+ * a route-local guess) to match the delivered clip.
+ */
+export function workerCanvasDims(ratio: '16:9' | '9:16' | '1:1' | '4:3' | '3:4'): { width: number; height: number } {
+  switch (ratio) {
+    case '16:9': return { width: 1920, height: 1080 }
+    case '1:1': return { width: 1080, height: 1080 }
+    case '4:3': return { width: 1440, height: 1080 }
+    case '3:4': return { width: 1080, height: 1440 }
+    case '9:16':
+    default: return { width: 1080, height: 1920 }
+  }
 }
