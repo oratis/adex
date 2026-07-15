@@ -27,6 +27,7 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     env: {
       AUTH_TOKEN_SECRET: 'e2e-test-secret-do-not-use-in-production',
+      WORKER_WEBHOOK_SECRET: 'e2e-worker-secret',
     },
   },
 })

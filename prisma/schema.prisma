@@ -1076,3 +1076,25 @@ model CompetitorCreative {
   @@index([orgId, appName])
   @@index([orgId, relevance])
 }
+
+model RemixJob {
+  id                   String   @id @default(cuid())
+  orgId                String
+  userId               String
+  competitorCreativeId String?
+  creativeId           String?   // 本 job 产出的 review-gated Creative
+  tier                 String    @default("t0_5") // t0_5 (本期) | 预留 t0/t1/t2/mixed
+  status               String    @default("pending") // pending|claimed|running|assembling|qc|succeeded|failed
+  brief                Json      // RemixBrief 快照（含 storyboard beats）
+  segmentPlan          Json?     // 预留后续分段路由
+  beats                Json?     // worker 上报的逐段进度 [{index,role,status,taskId?,videoUrl?,seconds?}]
+  outputUrl            String?   // 最终成片 GCS URL
+  qcReport             Json?     // 品牌复扫报告
+  costTokens           Int?
+  error                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([orgId, status])
+  @@index([orgId, createdAt])
+}
