@@ -18,6 +18,16 @@ import { sign } from './helpers/hmac'
 // `beforeAll` only registers once and no two workers race the same account.
 test.describe.configure({ mode: 'serial' })
 
+// Same convention as competitor-ingest.spec.ts: upstream CI runs the web server
+// with no DATABASE_URL and an invite-gated register endpoint, so DB-backed specs
+// self-skip unless the runner env opts in (set both secrets against a live
+// Postgres, matching playwright.config.ts webServer.env). File-scope skip so the
+// registration `beforeAll` never runs either.
+test.skip(
+  !process.env.INGEST_WEBHOOK_SECRET || !process.env.WORKER_WEBHOOK_SECRET,
+  'requires INGEST_WEBHOOK_SECRET + WORKER_WEBHOOK_SECRET in the runner env (live Postgres)',
+)
+
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || ''
 const p = (path: string) => `${BASE_PATH}${path.startsWith('/') ? path : '/' + path}`
 
