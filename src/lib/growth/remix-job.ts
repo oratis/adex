@@ -70,6 +70,64 @@ export function asJson(v: unknown): Prisma.InputJsonValue {
   return v as Prisma.InputJsonValue
 }
 
+/** Tiers the tier-gating validator recognizes as structurally valid (400 if outside this set). */
+export const KNOWN_TIERS = ['t0_5', 't1', 't2'] as const
+export type KnownTier = (typeof KNOWN_TIERS)[number]
+
+/**
+ * Parse the REMIX_ENABLED_TIERS env gate into a set of enabled tier codes.
+ * Defaults to `{'t0_5'}` when unset/empty — the shipped default stays
+ * IP-policy-conservative until an operator explicitly opts in to t1/t2.
+ */
+export function parseEnabledTiers(env?: string): Set<string> {
+  const raw = env ?? process.env.REMIX_ENABLED_TIERS
+  if (!raw || !raw.trim()) return new Set(['t0_5'])
+  const tiers = raw
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+  return new Set(tiers.length > 0 ? tiers : ['t0_5'])
+}
+
+/** One segment-routing instruction within a RemixJob.segmentPlan. */
+export interface SegmentPlanEntry {
+  start: number
+  end: number
+  action: 'reuse' | 'remake' | 'drop'
+  description?: string
+  reason?: string
+}
+
+const SEGMENT_ACTIONS = new Set(['reuse', 'remake', 'drop'])
+
+/**
+ * Validate + normalize a POST body's `segmentPlan` field. Returns `null` on
+ * any structural violation (route layer turns that into a 400) — never
+ * throws, since this runs on untrusted request input.
+ */
+export function parseSegmentPlan(raw: unknown): SegmentPlanEntry[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null
+
+  const out: SegmentPlanEntry[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') return null
+    const { start, end, action, description, reason } = item as Record<string, unknown>
+    if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start) || !Number.isFinite(end)) {
+      return null
+    }
+    if (start >= end) return null
+    if (typeof action !== 'string' || !SEGMENT_ACTIONS.has(action)) return null
+    if (description !== undefined && typeof description !== 'string') return null
+    if (reason !== undefined && typeof reason !== 'string') return null
+
+    const entry: SegmentPlanEntry = { start, end, action: action as SegmentPlanEntry['action'] }
+    if (typeof description === 'string') entry.description = description
+    if (typeof reason === 'string') entry.reason = reason
+    out.push(entry)
+  }
+  return out
+}
+
 /**
  * Canvas dimensions per storyboard ratio — this is the actual canvas the
  * worker renders to, so Creative.width/height must be derived from this (not

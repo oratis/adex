@@ -118,6 +118,18 @@ export async function POST(req: NextRequest) {
     req,
   })
 
+  // t1/t2 need the competitor's stored video as a worker-side @reference (t1)
+  // or clean-segment source (t2) — resolved via competitorCreativeId →
+  // CompetitorCreative.assetId → Asset.fileUrl. t0_5 never touches this path.
+  let refs: Array<{ url: string; kind: 'video' }> = []
+  if ((job.tier === 't1' || job.tier === 't2') && job.competitorCreativeId) {
+    const cc = await prisma.competitorCreative.findUnique({ where: { id: job.competitorCreativeId } })
+    const asset = cc?.assetId ? await prisma.asset.findUnique({ where: { id: cc.assetId } }) : null
+    if (asset?.fileUrl) {
+      refs = [{ url: asset.fileUrl, kind: 'video' }]
+    }
+  }
+
   return NextResponse.json({
     job: {
       id: job.id,
@@ -128,6 +140,7 @@ export async function POST(req: NextRequest) {
       creativeId: job.creativeId,
       claimToken: job.claimToken,
       attempt: job.attempt,
+      ...(job.tier === 't1' || job.tier === 't2' ? { refs } : {}),
     },
   })
 }

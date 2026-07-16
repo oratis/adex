@@ -33,6 +33,9 @@ export default defineConfig({
       // specs) but not here would sign requests the dev server can't verify.
       WORKER_WEBHOOK_SECRET: process.env.WORKER_WEBHOOK_SECRET || 'e2e-worker-secret',
       INGEST_WEBHOOK_SECRET: process.env.INGEST_WEBHOOK_SECRET || 'e2e-competitor-ingest-secret',
+      // e2e runs with every tier open so 400-path coverage exercises t1/t2 —
+      // the shipped default (unset) stays 't0_5' only, see remix-job.ts.
+      REMIX_ENABLED_TIERS: 't0_5,t1,t2',
     },
   },
 })

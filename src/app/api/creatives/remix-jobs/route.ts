@@ -27,15 +27,16 @@ import {
   competitorCreativeToAnalysis,
   type ProductBrief,
 } from '@/lib/growth/remix-brief'
-import { asJson, workerCanvasDims } from '@/lib/growth/remix-job'
+import { asJson, workerCanvasDims, KNOWN_TIERS, parseEnabledTiers, parseSegmentPlan } from '@/lib/growth/remix-job'
 
 // Cost guardrails (mirrors /api/creatives/remix): burst limit + per-org daily cap.
 const REMIX_BURST_LIMIT = Number(process.env.REMIX_BURST_LIMIT || 20)
 const REMIX_DAILY_CAP = Number(process.env.REMIX_DAILY_CAP || 50)
 
-// Only t0_5 is open this phase — t0/t1/t2/mixed are reserved for a later rollout.
-const SUPPORTED_TIERS = ['t0_5'] as const
-type SupportedTier = (typeof SUPPORTED_TIERS)[number]
+// Tier codes exist for t1/t2 but stay behind an explicit opt-in — see
+// REMIX_ENABLED_TIERS (parseEnabledTiers, default 't0_5' only). This keeps the
+// shipped default identical to the current IP policy: borrow-structure-not-pixels.
+type SupportedTier = (typeof KNOWN_TIERS)[number]
 
 export async function POST(req: NextRequest) {
   let user, org
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { competitorCreativeId, tier, product, positioning, audience, artDirection, cta, differentiation, forbidden } = body
+    const { competitorCreativeId, tier, product, positioning, audience, artDirection, cta, differentiation, forbidden, segmentPlan: rawSegmentPlan } = body
 
     if (!competitorCreativeId) {
       return NextResponse.json({ error: 'competitorCreativeId is required' }, { status: 400 })
@@ -76,11 +77,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'product and positioning are required' }, { status: 400 })
     }
     const resolvedTier: SupportedTier = tier === undefined ? 't0_5' : tier
-    if (!SUPPORTED_TIERS.includes(resolvedTier)) {
+    if (!(KNOWN_TIERS as readonly string[]).includes(resolvedTier)) {
       return NextResponse.json(
-        { error: `Unsupported tier "${tier}" — only "t0_5" is available this phase` },
+        { error: `Unsupported tier "${tier}" — must be one of ${KNOWN_TIERS.join(', ')}` },
         { status: 400 },
       )
+    }
+    const enabledTiers = parseEnabledTiers()
+    if (!enabledTiers.has(resolvedTier)) {
+      return NextResponse.json(
+        { error: `tier ${resolvedTier} is not enabled (REMIX_ENABLED_TIERS)` },
+        { status: 403 },
+      )
+    }
+
+    // t2 (reuse-clean-segments) requires a caller-supplied, validated segment
+    // plan with at least one 'reuse' segment — otherwise there's nothing to reuse.
+    let segmentPlan: ReturnType<typeof parseSegmentPlan> = null
+    if (rawSegmentPlan !== undefined) {
+      segmentPlan = parseSegmentPlan(rawSegmentPlan)
+      if (segmentPlan === null) {
+        return NextResponse.json({ error: 'segmentPlan is invalid — expected [{start,end,action,description?,reason?}]' }, { status: 400 })
+      }
+    }
+    if (resolvedTier === 't2') {
+      if (!segmentPlan || !segmentPlan.some((s) => s.action === 'reuse')) {
+        return NextResponse.json(
+          { error: 'tier t2 requires a segmentPlan with at least one "reuse" segment' },
+          { status: 400 },
+        )
+      }
     }
 
     const cc = await prisma.competitorCreative.findFirst({
@@ -88,6 +114,19 @@ export async function POST(req: NextRequest) {
     })
     if (!cc) {
       return NextResponse.json({ error: 'Competitor creative not found' }, { status: 404 })
+    }
+
+    // t1 (generate-with-reference) / t2 (reuse-clean-segments) both need the
+    // competitor's video already stored by the Tier-2 "Save video" flow — a
+    // human-picked, legal-cleared Asset. We only read it here.
+    if (resolvedTier === 't1' || resolvedTier === 't2') {
+      const storedAsset = cc.assetId ? await prisma.asset.findFirst({ where: { id: cc.assetId, orgId: org.id } }) : null
+      if (!storedAsset || !storedAsset.fileUrl) {
+        return NextResponse.json(
+          { error: 'competitor video not stored — use the Tier-2 "Save video" flow first' },
+          { status: 400 },
+        )
+      }
     }
 
     // Map the ingested competitor row → analysis (screenUnderstanding rides along
@@ -126,6 +165,10 @@ export async function POST(req: NextRequest) {
             borrowed: brief.borrowed,
             changed: brief.changed,
             compliance: brief.compliance,
+            // Hard IP-provenance markers the review UI badges on — see
+            // src/app/(dashboard)/creatives/{page,client}.tsx.
+            ...(resolvedTier === 't1' ? { competitorReferenced: true } : {}),
+            ...(resolvedTier === 't2' ? { containsCompetitorFootage: true } : {}),
           }),
           status: 'generating',
           reviewStatus: 'pending',
@@ -144,6 +187,7 @@ export async function POST(req: NextRequest) {
           tier: resolvedTier,
           status: 'pending',
           brief: asJson(brief),
+          segmentPlan: segmentPlan ? asJson(segmentPlan) : undefined,
         },
       })
 

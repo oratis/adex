@@ -138,12 +138,53 @@ test.describe('creatives/remix-jobs — control plane', () => {
     expect(json.creative.status).toBe('generating')
   })
 
-  test('rejects unsupported tiers with 400', async () => {
+  test('rejects unknown tiers with 400', async () => {
+    const competitorCreativeId = await ingestCompetitorCreative()
+    const res = await ctx.post(p('/api/creatives/remix-jobs'), {
+      data: { competitorCreativeId, tier: 't9', ...REMIX_PRODUCT },
+    })
+    expect(res.status()).toBe(400)
+  })
+
+  // t1/t2 gating (Tier-1/2 control-plane opt-in). The e2e webServer runs with
+  // REMIX_ENABLED_TIERS="t0_5,t1,t2" (playwright.config.ts) so the 403
+  // "not enabled" branch (parseEnabledTiers) can't be exercised end-to-end
+  // here — it's covered by reading parseEnabledTiers' default behavior
+  // (unset/empty env → {'t0_5'}) plus the route wiring reviewed by hand.
+  // These tests instead cover the two 400 gates that DO run with all tiers
+  // open: t2's segmentPlan requirement, and both tiers' "video must already
+  // be stored via Tier-2 Save video" requirement.
+  test('t2 without a segmentPlan → 400', async () => {
+    const competitorCreativeId = await ingestCompetitorCreative()
+    const res = await ctx.post(p('/api/creatives/remix-jobs'), {
+      data: { competitorCreativeId, tier: 't2', ...REMIX_PRODUCT },
+    })
+    expect(res.status()).toBe(400)
+  })
+
+  test('t2 with a valid segmentPlan but no stored competitor video → 400 "Save video"', async () => {
+    const competitorCreativeId = await ingestCompetitorCreative()
+    const res = await ctx.post(p('/api/creatives/remix-jobs'), {
+      data: {
+        competitorCreativeId,
+        tier: 't2',
+        segmentPlan: [{ start: 0, end: 3, action: 'reuse', description: 'hook' }],
+        ...REMIX_PRODUCT,
+      },
+    })
+    expect(res.status()).toBe(400)
+    const json = await res.json()
+    expect(json.error).toContain('Save video')
+  })
+
+  test('t1 with no stored competitor video → 400 "Save video"', async () => {
     const competitorCreativeId = await ingestCompetitorCreative()
     const res = await ctx.post(p('/api/creatives/remix-jobs'), {
       data: { competitorCreativeId, tier: 't1', ...REMIX_PRODUCT },
     })
     expect(res.status()).toBe(400)
+    const json = await res.json()
+    expect(json.error).toContain('Save video')
   })
 })
 
