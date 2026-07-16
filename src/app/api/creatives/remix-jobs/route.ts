@@ -128,6 +128,18 @@ export async function POST(req: NextRequest) {
         )
       }
     }
+    // A segment plan indexes into the source video — when we know the source's
+    // duration, a segment reaching past it is a caller error, not a worker
+    // problem to discover via a garbage ffmpeg cut.
+    if (segmentPlan && typeof cc.duration === 'number' && cc.duration > 0) {
+      const maxEnd = segmentPlan[segmentPlan.length - 1].end
+      if (maxEnd > cc.duration + 1) {
+        return NextResponse.json(
+          { error: `segmentPlan ends at ${maxEnd}s but the source video is ${cc.duration}s` },
+          { status: 400 },
+        )
+      }
+    }
 
     // Map the ingested competitor row → analysis (screenUnderstanding rides along
     // only as the anti-reference; the remix never reproduces it).
@@ -174,7 +186,12 @@ export async function POST(req: NextRequest) {
           reviewStatus: 'pending',
           width: dims.width,
           height: dims.height,
-          duration: brief.durationSec,
+          // t2 output length is the sum of kept (reuse/remake) segments, not the
+          // brief's whole-video estimate — dropped segments are cut from the timeline.
+          duration:
+            resolvedTier === 't2' && segmentPlan
+              ? Math.round(segmentPlan.filter((s) => s.action !== 'drop').reduce((acc, s) => acc + (s.end - s.start), 0))
+              : brief.durationSec,
         },
       })
 

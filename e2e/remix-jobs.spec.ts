@@ -154,6 +154,22 @@ test.describe('creatives/remix-jobs — control plane', () => {
   // These tests instead cover the two 400 gates that DO run with all tiers
   // open: t2's segmentPlan requirement, and both tiers' "video must already
   // be stored via Tier-2 Save video" requirement.
+  test('t2 with a malformed segmentPlan (negative start / overlap) → 400', async () => {
+    const competitorCreativeId = await ingestCompetitorCreative()
+    for (const bad of [
+      [{ start: -10, end: 5, action: 'reuse' }],
+      [
+        { start: 0, end: 5, action: 'reuse' },
+        { start: 3, end: 8, action: 'reuse' },
+      ],
+    ]) {
+      const res = await ctx.post(p('/api/creatives/remix-jobs'), {
+        data: { competitorCreativeId, tier: 't2', segmentPlan: bad, ...REMIX_PRODUCT },
+      })
+      expect(res.status(), JSON.stringify(bad)).toBe(400)
+    }
+  })
+
   test('t2 without a segmentPlan → 400', async () => {
     const competitorCreativeId = await ingestCompetitorCreative()
     const res = await ctx.post(p('/api/creatives/remix-jobs'), {

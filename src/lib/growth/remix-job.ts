@@ -78,15 +78,18 @@ export type KnownTier = (typeof KNOWN_TIERS)[number]
  * Parse the REMIX_ENABLED_TIERS env gate into a set of enabled tier codes.
  * Defaults to `{'t0_5'}` when unset/empty — the shipped default stays
  * IP-policy-conservative until an operator explicitly opts in to t1/t2.
+ * The baseline t0_5 tier is ALWAYS enabled: this env var only ever widens
+ * the set (an operator setting "t1" must not silently break the default path).
  */
 export function parseEnabledTiers(env?: string): Set<string> {
   const raw = env ?? process.env.REMIX_ENABLED_TIERS
-  if (!raw || !raw.trim()) return new Set(['t0_5'])
-  const tiers = raw
-    .split(',')
-    .map((t) => t.trim())
-    .filter(Boolean)
-  return new Set(tiers.length > 0 ? tiers : ['t0_5'])
+  const tiers = new Set(['t0_5'])
+  if (!raw || !raw.trim()) return tiers
+  for (const t of raw.split(',')) {
+    const trimmed = t.trim()
+    if (trimmed) tiers.add(trimmed)
+  }
+  return tiers
 }
 
 /** One segment-routing instruction within a RemixJob.segmentPlan. */
@@ -100,22 +103,31 @@ export interface SegmentPlanEntry {
 
 const SEGMENT_ACTIONS = new Set(['reuse', 'remake', 'drop'])
 
+/** Upper bound on segmentPlan entries — a plan is a shot list, not a firehose. */
+export const SEGMENT_PLAN_MAX_ENTRIES = 64
+
 /**
  * Validate + normalize a POST body's `segmentPlan` field. Returns `null` on
  * any structural violation (route layer turns that into a 400) — never
  * throws, since this runs on untrusted request input.
+ * Beyond per-entry shape: entries must be timeline-ordered (ascending start)
+ * and non-overlapping, starts non-negative, and the list capped at
+ * SEGMENT_PLAN_MAX_ENTRIES — the plan is stored verbatim and echoed to the
+ * worker, so unbounded/incoherent input must die here.
  */
 export function parseSegmentPlan(raw: unknown): SegmentPlanEntry[] | null {
-  if (!Array.isArray(raw) || raw.length === 0) return null
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > SEGMENT_PLAN_MAX_ENTRIES) return null
 
   const out: SegmentPlanEntry[] = []
+  let prevEnd = -Infinity
   for (const item of raw) {
     if (!item || typeof item !== 'object') return null
     const { start, end, action, description, reason } = item as Record<string, unknown>
     if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start) || !Number.isFinite(end)) {
       return null
     }
-    if (start >= end) return null
+    if (start < 0 || start >= end) return null
+    if (start < prevEnd) return null // overlapping or out-of-order segments
     if (typeof action !== 'string' || !SEGMENT_ACTIONS.has(action)) return null
     if (description !== undefined && typeof description !== 'string') return null
     if (reason !== undefined && typeof reason !== 'string') return null
@@ -124,6 +136,7 @@ export function parseSegmentPlan(raw: unknown): SegmentPlanEntry[] | null {
     if (typeof description === 'string') entry.description = description
     if (typeof reason === 'string') entry.reason = reason
     out.push(entry)
+    prevEnd = end
   }
   return out
 }
