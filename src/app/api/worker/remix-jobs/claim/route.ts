@@ -1,0 +1,172 @@
+/**
+ * POST /api/worker/remix-jobs/claim — atomic RemixJob pickup for the worker engine.
+ *
+ * Body: `{}` or `{ jobId }`. A job is claimable when it's `status: 'pending'`,
+ * OR when it's in an in-flight status (`claimed|running|assembling|qc`) whose
+ * `updatedAt` is older than the lease window (`REMIX_JOB_LEASE_MINUTES`,
+ * default 30) — a worker that died mid-job leaves its job claimable again
+ * instead of stuck forever. With `jobId`, claims that exact job iff it
+ * currently satisfies the claimable condition. Without it, claims the oldest
+ * pending job, falling back to the oldest stale in-flight job when the
+ * pending queue is empty. Atomicity comes from a single
+ * `updateMany({ where: { id, OR: [...] }, ... })` — only the caller whose
+ * updateMany reports `count === 1` actually won the race; everyone else (and
+ * an empty queue) gets `{ job: null }`, never a 409 — the worker is expected
+ * to poll.
+ *
+ * Claim fencing: every successful claim mints a fresh `claimToken`
+ * (crypto.randomUUID()) and bumps `attempt`. The old holder's token is
+ * discarded — if it was mid-job (stale-lease reclaim) and later tries to
+ * /upload or /report, its request carries the now-stale token and is
+ * rejected with 409 by those routes. This makes preemption physically safe:
+ * the old worker cannot overwrite the new holder's output even if it's still
+ * running unaware its lease was reclaimed.
+ *
+ * Tier kill-switch: REMIX_ENABLED_TIERS (parseEnabledTiers) was originally just
+ * an at-creation allowlist (/api/creatives/remix-jobs rejects disallowed tiers
+ * up front). Here it's re-checked at claim time too, so pulling a tier from the
+ * env takes effect immediately — any t1/t2 job already sitting pending/stale
+ * simply stops being claimable the moment the operator flips the env, no
+ * redeploy-and-wait needed. Known edge: a job that's *already* claimed and
+ * within its lease when the tier is disabled can't be recalled — the worker
+ * already holds its refs and is generating. That's a deliberate boundary, not
+ * a gap: fixing it would mean revoking in-flight work mid-render.
+ *
+ * Ref: src/lib/growth/remix-job.ts
+ */
+import crypto from 'node:crypto'
+import { NextRequest, NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
+import type { Prisma } from '@/generated/prisma/client'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { logAudit } from '@/lib/audit'
+import { readWorkerAuthHeaders, verifyWorkerHmac, workerUnauthorized, parseEnabledTiers } from '@/lib/growth/remix-job'
+
+interface ClaimBody {
+  jobId?: string
+}
+
+const IN_FLIGHT_STATUSES = ['claimed', 'running', 'assembling', 'qc']
+const LEASE_MINUTES = Number(process.env.REMIX_JOB_LEASE_MINUTES || 30)
+
+function claimableWhere(cutoff: Date): Prisma.RemixJobWhereInput['OR'] {
+  return [
+    { status: 'pending' },
+    { status: { in: IN_FLIGHT_STATUSES }, updatedAt: { lt: cutoff } },
+  ]
+}
+
+export async function POST(req: NextRequest) {
+  // Abuse guardrail, not a real quota — the worker polls this endpoint
+  // continuously, so the limit is generous (600/min/IP) and just there to
+  // cut off a runaway/misconfigured poller before it hammers the DB.
+  const rl = checkRateLimit(req, { key: 'worker-claim', limit: 600, windowMs: 60_000 })
+  if (!rl.ok) return rateLimitResponse(rl)
+
+  const headers = readWorkerAuthHeaders(req)
+  const rawBody = await req.text()
+  if (!verifyWorkerHmac(headers, rawBody)) {
+    return workerUnauthorized()
+  }
+
+  let body: ClaimBody = {}
+  if (rawBody) {
+    try {
+      body = JSON.parse(rawBody)
+    } catch {
+      return NextResponse.json({ error: 'invalid json' }, { status: 400 })
+    }
+  }
+
+  const cutoff = new Date(Date.now() - LEASE_MINUTES * 60_000)
+  const enabledTiers = [...parseEnabledTiers()]
+
+  let targetId: string | null = body.jobId ?? null
+  if (!targetId) {
+    const oldestPending = await prisma.remixJob.findFirst({
+      where: { status: 'pending', tier: { in: enabledTiers } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    })
+    if (oldestPending) {
+      targetId = oldestPending.id
+    } else {
+      const oldestStale = await prisma.remixJob.findFirst({
+        where: { status: { in: IN_FLIGHT_STATUSES }, updatedAt: { lt: cutoff }, tier: { in: enabledTiers } },
+        orderBy: { updatedAt: 'asc' },
+        select: { id: true },
+      })
+      targetId = oldestStale?.id ?? null
+    }
+  }
+
+  let claimedId: string | null = null
+  const token = crypto.randomUUID()
+  if (targetId) {
+    const result = await prisma.remixJob.updateMany({
+      where: { id: targetId, tier: { in: enabledTiers }, OR: claimableWhere(cutoff) },
+      data: { status: 'claimed', claimToken: token, attempt: { increment: 1 } },
+    })
+    claimedId = result.count === 1 ? targetId : null
+  }
+
+  if (!claimedId) {
+    return NextResponse.json({ job: null })
+  }
+
+  const job = await prisma.remixJob.findUnique({ where: { id: claimedId } })
+  if (!job) {
+    return NextResponse.json({ job: null })
+  }
+
+  await logAudit({
+    orgId: job.orgId,
+    userId: job.userId,
+    action: 'remix.job_claim',
+    targetType: 'RemixJob',
+    targetId: job.id,
+    metadata: { tier: job.tier, attempt: job.attempt },
+    req,
+  })
+
+  // t1/t2 need the competitor's stored video as a worker-side @reference (t1)
+  // or clean-segment source (t2) — resolved via competitorCreativeId →
+  // CompetitorCreative.assetId → Asset.fileUrl. t0_5 never touches this path.
+  let refs: Array<{ url: string; kind: 'video' }> = []
+  if ((job.tier === 't1' || job.tier === 't2') && job.competitorCreativeId) {
+    // Scope both lookups to the job's org — a cross-org assetId (bad import,
+    // later mutation) must never leak another org's fileUrl to the worker.
+    const cc = await prisma.competitorCreative.findFirst({
+      where: { id: job.competitorCreativeId, orgId: job.orgId },
+    })
+    const asset = cc?.assetId
+      ? await prisma.asset.findFirst({ where: { id: cc.assetId, orgId: job.orgId } })
+      : null
+    if (asset?.fileUrl) {
+      refs = [{ url: asset.fileUrl, kind: 'video' }]
+      await logAudit({
+        orgId: job.orgId,
+        userId: job.userId,
+        action: 'competitor.video_reference',
+        targetType: 'RemixJob',
+        targetId: job.id,
+        metadata: { tier: job.tier, competitorCreativeId: job.competitorCreativeId, assetId: cc?.assetId },
+        req,
+      })
+    }
+  }
+
+  return NextResponse.json({
+    job: {
+      id: job.id,
+      orgId: job.orgId,
+      tier: job.tier,
+      brief: job.brief,
+      segmentPlan: job.segmentPlan,
+      creativeId: job.creativeId,
+      claimToken: job.claimToken,
+      attempt: job.attempt,
+      ...(job.tier === 't1' || job.tier === 't2' ? { refs } : {}),
+    },
+  })
+}

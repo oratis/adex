@@ -12,6 +12,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: adex
+          POSTGRES_PASSWORD: adex
+          POSTGRES_DB: adex_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U adex"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      AUTH_TOKEN_SECRET: e2e-test-secret-not-used-for-runtime
+      DATABASE_URL: postgresql://adex:adex@localhost:5432/adex_e2e
+      # Testing-only values, not secrets — enable the DB-backed e2e specs
+      # (competitor-ingest, remix-jobs) that self-skip without them, and let
+      # e2e/register run without minting real invite codes.
+      INGEST_WEBHOOK_SECRET: e2e-competitor-ingest-secret
+      WORKER_WEBHOOK_SECRET: e2e-worker-secret
+      INVITE_CODES_DISABLED: 'true'
+
     steps:
       - uses: actions/checkout@v4
 
@@ -26,17 +51,17 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
       - name: Build app
-        env:
-          AUTH_TOKEN_SECRET: e2e-test-secret-not-used-for-runtime
         run: npm run build
 
       - name: Run Playwright tests
         env:
-          AUTH_TOKEN_SECRET: e2e-test-secret-not-used-for-runtime
           PORT: '3000'
         run: npm run test:e2e
 
