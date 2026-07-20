@@ -80,14 +80,25 @@ export type KnownTier = (typeof KNOWN_TIERS)[number]
  * IP-policy-conservative until an operator explicitly opts in to t1/t2.
  * The baseline t0_5 tier is ALWAYS enabled: this env var only ever widens
  * the set (an operator setting "t1" must not silently break the default path).
+ * Tokens are trimmed and lower-cased before comparison (env vars get typo'd/
+ * cased inconsistently across deploy tooling) and validated against
+ * KNOWN_TIERS — an unrecognized token is dropped with a warning rather than
+ * silently added to the enabled set, since a typo there is a security-relevant
+ * misconfiguration (accidentally enabling nothing vs. accidentally enabling
+ * everything you didn't mean to).
  */
 export function parseEnabledTiers(env?: string): Set<string> {
   const raw = env ?? process.env.REMIX_ENABLED_TIERS
-  const tiers = new Set(['t0_5'])
+  const tiers = new Set<string>(['t0_5'])
   if (!raw || !raw.trim()) return tiers
   for (const t of raw.split(',')) {
-    const trimmed = t.trim()
-    if (trimmed) tiers.add(trimmed)
+    const trimmed = t.trim().toLowerCase()
+    if (!trimmed) continue
+    if ((KNOWN_TIERS as readonly string[]).includes(trimmed)) {
+      tiers.add(trimmed)
+    } else {
+      console.warn(`[remix] REMIX_ENABLED_TIERS: unknown tier "${trimmed}" ignored`)
+    }
   }
   return tiers
 }

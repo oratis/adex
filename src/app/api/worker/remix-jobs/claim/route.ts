@@ -22,6 +22,16 @@
  * the old worker cannot overwrite the new holder's output even if it's still
  * running unaware its lease was reclaimed.
  *
+ * Tier kill-switch: REMIX_ENABLED_TIERS (parseEnabledTiers) was originally just
+ * an at-creation allowlist (/api/creatives/remix-jobs rejects disallowed tiers
+ * up front). Here it's re-checked at claim time too, so pulling a tier from the
+ * env takes effect immediately — any t1/t2 job already sitting pending/stale
+ * simply stops being claimable the moment the operator flips the env, no
+ * redeploy-and-wait needed. Known edge: a job that's *already* claimed and
+ * within its lease when the tier is disabled can't be recalled — the worker
+ * already holds its refs and is generating. That's a deliberate boundary, not
+ * a gap: fixing it would mean revoking in-flight work mid-render.
+ *
  * Ref: src/lib/growth/remix-job.ts
  */
 import crypto from 'node:crypto'
@@ -30,7 +40,7 @@ import { prisma } from '@/lib/prisma'
 import type { Prisma } from '@/generated/prisma/client'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { logAudit } from '@/lib/audit'
-import { readWorkerAuthHeaders, verifyWorkerHmac, workerUnauthorized } from '@/lib/growth/remix-job'
+import { readWorkerAuthHeaders, verifyWorkerHmac, workerUnauthorized, parseEnabledTiers } from '@/lib/growth/remix-job'
 
 interface ClaimBody {
   jobId?: string
@@ -69,11 +79,12 @@ export async function POST(req: NextRequest) {
   }
 
   const cutoff = new Date(Date.now() - LEASE_MINUTES * 60_000)
+  const enabledTiers = [...parseEnabledTiers()]
 
   let targetId: string | null = body.jobId ?? null
   if (!targetId) {
     const oldestPending = await prisma.remixJob.findFirst({
-      where: { status: 'pending' },
+      where: { status: 'pending', tier: { in: enabledTiers } },
       orderBy: { createdAt: 'asc' },
       select: { id: true },
     })
@@ -81,7 +92,7 @@ export async function POST(req: NextRequest) {
       targetId = oldestPending.id
     } else {
       const oldestStale = await prisma.remixJob.findFirst({
-        where: { status: { in: IN_FLIGHT_STATUSES }, updatedAt: { lt: cutoff } },
+        where: { status: { in: IN_FLIGHT_STATUSES }, updatedAt: { lt: cutoff }, tier: { in: enabledTiers } },
         orderBy: { updatedAt: 'asc' },
         select: { id: true },
       })
@@ -93,7 +104,7 @@ export async function POST(req: NextRequest) {
   const token = crypto.randomUUID()
   if (targetId) {
     const result = await prisma.remixJob.updateMany({
-      where: { id: targetId, OR: claimableWhere(cutoff) },
+      where: { id: targetId, tier: { in: enabledTiers }, OR: claimableWhere(cutoff) },
       data: { status: 'claimed', claimToken: token, attempt: { increment: 1 } },
     })
     claimedId = result.count === 1 ? targetId : null
@@ -133,6 +144,15 @@ export async function POST(req: NextRequest) {
       : null
     if (asset?.fileUrl) {
       refs = [{ url: asset.fileUrl, kind: 'video' }]
+      await logAudit({
+        orgId: job.orgId,
+        userId: job.userId,
+        action: 'competitor.video_reference',
+        targetType: 'RemixJob',
+        targetId: job.id,
+        metadata: { tier: job.tier, competitorCreativeId: job.competitorCreativeId, assetId: cc?.assetId },
+        req,
+      })
     }
   }
 

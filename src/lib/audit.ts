@@ -22,6 +22,9 @@ export type AuditAction =
   | 'creative.attach'
   // Competitor intel (Tier-2 full-video storage — IP-sensitive, logged for provenance)
   | 'competitor.video_store'
+  // t1/t2 remix claim hands the worker a competitor video reference — same IP
+  // sensitivity as video_store, logged for provenance.
+  | 'competitor.video_reference'
   // RemixJob (worker-engine competitor-remix path — src/app/api/worker/remix-jobs/**)
   | 'remix.job_create'
   | 'remix.job_claim'
