@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { logAudit } from '@/lib/audit'
 import {
   buildRemixBrief,
   competitorCreativeToAnalysis,
@@ -47,8 +48,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Cost guardrails before any work: burst limit + per-org daily cap.
-    const rl = checkRateLimit(req, { key: 'remix-jobs', limit: REMIX_BURST_LIMIT, windowMs: 600_000, identity: org.id })
+    // Cost guardrails before any work: burst limit + per-org daily cap. Rate-limit
+    // key is 'remix' — shared with the sibling /api/creatives/remix (Seedance2-direct)
+    // endpoint, not a per-route key, so a caller hitting both endpoints can't double
+    // the effective burst by splitting requests across the two.
+    const rl = checkRateLimit(req, { key: 'remix', limit: REMIX_BURST_LIMIT, windowMs: 600_000, identity: org.id })
     if (!rl.ok) return rateLimitResponse(rl)
     const since = new Date()
     since.setHours(0, 0, 0, 0)
@@ -102,42 +106,58 @@ export async function POST(req: NextRequest) {
     const brief = await buildRemixBrief(analysis, productBrief)
     const dims = workerCanvasDims(brief.ratio)
 
-    // Review-gated ad (the thing a human approves before any push). No render call
+    // Review-gated ad (the thing a human approves before any push) + its RemixJob
+    // created atomically — a crash between the two writes must never leave an
+    // orphaned Creative with no job to fill it in, or vice versa. No render call
     // here — status stays 'generating' until the worker reports back via /report.
-    const creative = await prisma.creative.create({
-      data: {
-        orgId: org.id,
-        userId: user.id,
-        name: `${productBrief.product} remix — ${brief.sourceRef}`.slice(0, 80),
-        type: 'video',
-        source: 'remix',
-        prompt: brief.seedance2Prompt,
-        sourceRef: cc.externalId,
-        tags: JSON.stringify({
+    const { creative, job } = await prisma.$transaction(async (tx) => {
+      const creative = await tx.creative.create({
+        data: {
+          orgId: org.id,
+          userId: user.id,
+          name: `${productBrief.product} remix — ${brief.sourceRef}`.slice(0, 80),
+          type: 'video',
+          source: 'remix',
+          prompt: brief.seedance2Prompt,
+          sourceRef: cc.externalId,
+          tags: JSON.stringify({
+            tier: resolvedTier,
+            engine: 'worker',
+            borrowed: brief.borrowed,
+            changed: brief.changed,
+            compliance: brief.compliance,
+          }),
+          status: 'generating',
+          reviewStatus: 'pending',
+          width: dims.width,
+          height: dims.height,
+          duration: brief.durationSec,
+        },
+      })
+
+      const job = await tx.remixJob.create({
+        data: {
+          orgId: org.id,
+          userId: user.id,
+          competitorCreativeId: cc.id,
+          creativeId: creative.id,
           tier: resolvedTier,
-          engine: 'worker',
-          borrowed: brief.borrowed,
-          changed: brief.changed,
-          compliance: brief.compliance,
-        }),
-        status: 'generating',
-        reviewStatus: 'pending',
-        width: dims.width,
-        height: dims.height,
-        duration: brief.durationSec,
-      },
+          status: 'pending',
+          brief: asJson(brief),
+        },
+      })
+
+      return { creative, job }
     })
 
-    const job = await prisma.remixJob.create({
-      data: {
-        orgId: org.id,
-        userId: user.id,
-        competitorCreativeId: cc.id,
-        creativeId: creative.id,
-        tier: resolvedTier,
-        status: 'pending',
-        brief: asJson(brief),
-      },
+    await logAudit({
+      orgId: org.id,
+      userId: user.id,
+      action: 'remix.job_create',
+      targetType: 'RemixJob',
+      targetId: job.id,
+      metadata: { jobId: job.id, tier: resolvedTier, competitorCreativeId: cc.id },
+      req,
     })
 
     return NextResponse.json({ job, creative, brief })

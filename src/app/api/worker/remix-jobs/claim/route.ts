@@ -14,11 +14,22 @@
  * an empty queue) gets `{ job: null }`, never a 409 — the worker is expected
  * to poll.
  *
+ * Claim fencing: every successful claim mints a fresh `claimToken`
+ * (crypto.randomUUID()) and bumps `attempt`. The old holder's token is
+ * discarded — if it was mid-job (stale-lease reclaim) and later tries to
+ * /upload or /report, its request carries the now-stale token and is
+ * rejected with 409 by those routes. This makes preemption physically safe:
+ * the old worker cannot overwrite the new holder's output even if it's still
+ * running unaware its lease was reclaimed.
+ *
  * Ref: src/lib/growth/remix-job.ts
  */
+import crypto from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import type { Prisma } from '@/generated/prisma/client'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { logAudit } from '@/lib/audit'
 import { readWorkerAuthHeaders, verifyWorkerHmac, workerUnauthorized } from '@/lib/growth/remix-job'
 
 interface ClaimBody {
@@ -36,6 +47,12 @@ function claimableWhere(cutoff: Date): Prisma.RemixJobWhereInput['OR'] {
 }
 
 export async function POST(req: NextRequest) {
+  // Abuse guardrail, not a real quota — the worker polls this endpoint
+  // continuously, so the limit is generous (600/min/IP) and just there to
+  // cut off a runaway/misconfigured poller before it hammers the DB.
+  const rl = checkRateLimit(req, { key: 'worker-claim', limit: 600, windowMs: 60_000 })
+  if (!rl.ok) return rateLimitResponse(rl)
+
   const headers = readWorkerAuthHeaders(req)
   const rawBody = await req.text()
   if (!verifyWorkerHmac(headers, rawBody)) {
@@ -73,10 +90,11 @@ export async function POST(req: NextRequest) {
   }
 
   let claimedId: string | null = null
+  const token = crypto.randomUUID()
   if (targetId) {
     const result = await prisma.remixJob.updateMany({
       where: { id: targetId, OR: claimableWhere(cutoff) },
-      data: { status: 'claimed' },
+      data: { status: 'claimed', claimToken: token, attempt: { increment: 1 } },
     })
     claimedId = result.count === 1 ? targetId : null
   }
@@ -90,6 +108,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ job: null })
   }
 
+  await logAudit({
+    orgId: job.orgId,
+    userId: job.userId,
+    action: 'remix.job_claim',
+    targetType: 'RemixJob',
+    targetId: job.id,
+    metadata: { tier: job.tier, attempt: job.attempt },
+    req,
+  })
+
   return NextResponse.json({
     job: {
       id: job.id,
@@ -98,6 +126,8 @@ export async function POST(req: NextRequest) {
       brief: job.brief,
       segmentPlan: job.segmentPlan,
       creativeId: job.creativeId,
+      claimToken: job.claimToken,
+      attempt: job.attempt,
     },
   })
 }
