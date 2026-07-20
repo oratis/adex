@@ -1092,9 +1092,19 @@ model RemixJob {
   qcReport             Json?     // 品牌复扫报告
   costTokens           Int?
   error                String?
+  // Claim fencing: the current holder's token, reissued on every claim. upload/report
+  // both verify it, so a worker that lost its lease (preempted by a stale-lease reclaim)
+  // physically cannot overwrite the new holder's output — see claim/route.ts header comment.
+  claimToken           String?
+  // Claim count — bumps on every claim, used to version the output object key
+  // (remix/${orgId}/${jobId}/v${attempt}.mp4) so preempted/retried attempts never collide.
+  attempt              Int      @default(0)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
   @@index([orgId, status])
   @@index([orgId, createdAt])
+  // Claim hot path: filter by status, order by updatedAt (stale-lease lookup) —
+  // [orgId, status] above doesn't cover this since claim is org-independent.
+  @@index([status, updatedAt])
 }
