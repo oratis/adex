@@ -128,9 +128,21 @@ export async function POST(req: NextRequest) {
         )
       }
     }
-    // A segment plan indexes into the source video — when we know the source's
-    // duration, a segment reaching past it is a caller error, not a worker
-    // problem to discover via a garbage ffmpeg cut.
+    // A segment plan indexes into the source video, so we need to know the
+    // source's duration to validate it. Previously an unknown duration was a
+    // silent skip of the maxEnd check below — a caller could submit a
+    // segmentPlan reaching well past the actual video and it would sail
+    // through, only to fail (or silently truncate) at the worker. Reject
+    // instead: re-ingest the row with duration before accepting a segmentPlan.
+    if (rawSegmentPlan !== undefined && !(typeof cc.duration === 'number' && cc.duration > 0)) {
+      return NextResponse.json(
+        {
+          error:
+            'source video duration unknown — cannot validate segmentPlan against it; re-ingest the competitor creative with duration first',
+        },
+        { status: 400 },
+      )
+    }
     if (segmentPlan && typeof cc.duration === 'number' && cc.duration > 0) {
       const maxEnd = segmentPlan[segmentPlan.length - 1].end
       if (maxEnd > cc.duration + 1) {
