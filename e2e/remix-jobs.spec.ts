@@ -11,6 +11,7 @@
  * · src/lib/growth/remix-job.ts
  */
 import crypto from 'node:crypto'
+import pg from 'pg'
 import { test, expect, request as pwRequest, type APIRequestContext } from '@playwright/test'
 import { sign } from './helpers/hmac'
 
@@ -28,6 +29,17 @@ test.skip(
   !process.env.INGEST_WEBHOOK_SECRET || !process.env.WORKER_WEBHOOK_SECRET,
   'requires INGEST_WEBHOOK_SECRET + WORKER_WEBHOOK_SECRET in the runner env (live Postgres)',
 )
+
+// The t1/t2 refs tests below need to hand-insert an Asset row and point a
+// CompetitorCreative at it — there's no hermetic HTTP path to do this (the
+// real Tier-2 "Save video" flow at /api/competitors/media fetches the source
+// URL over the network). Attempting the spec's original plan — importing the
+// generated Prisma client (src/generated/prisma/client) from an e2e spec —
+// hits a hard CJS/ESM incompatibility: that file assumes ESM (top-level
+// `import.meta.url`) but Playwright's test transform loads it as CommonJS,
+// so `node:pg` (a plain CJS package, no bundler-specific output) is used for
+// direct SQL instead. Same DATABASE_URL as the app; skip gate covers it.
+test.skip(!process.env.DATABASE_URL, 'requires DATABASE_URL (direct SQL for the t1/t2 refs tests)')
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || ''
 const p = (path: string) => `${BASE_PATH}${path.startsWith('/') ? path : '/' + path}`
@@ -52,7 +64,10 @@ function sampleBatch(externalId: string) {
         region: 'TR',
         language: 'en',
         ratio: '9:16',
-        duration: 24,
+        // NOT `duration` — the payload's `duration` field is a firstSeen~lastSeen
+        // date range (src/lib/growth/competitor-import.ts), not the video length.
+        // `videoDuration` maps to CompetitorCreative.duration (seconds).
+        videoDuration: 24,
         creativeTags: ['Real Scene', '2D', 'Anime Characters'],
         sellingPoints: ['Genuine interaction', 'Social sharing'],
         emotionalTriggers: ['Love resonates'],
@@ -71,9 +86,12 @@ const REMIX_PRODUCT = {
 
 let ctx: APIRequestContext
 let orgId: string
+let userId: string
+let pool: pg.Pool
 
 test.beforeAll(async ({}, testInfo) => {
   ctx = await pwRequest.newContext({ baseURL: testInfo.project.use.baseURL })
+  pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
 
   const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const email = `remix-jobs-e2e-${unique}@adex-e2e.dev`
@@ -81,6 +99,7 @@ test.beforeAll(async ({}, testInfo) => {
     data: { email, password: 'e2e-test-password-1', name: `Remix Jobs E2E ${unique}` },
   })
   expect(res.ok(), await res.text()).toBeTruthy()
+  userId = (await res.json()).id
 
   const orgsRes = await ctx.get(p('/api/orgs'))
   expect(orgsRes.ok()).toBeTruthy()
@@ -89,6 +108,26 @@ test.beforeAll(async ({}, testInfo) => {
   expect(orgs.length).toBeGreaterThan(0)
   orgId = orgs[0].id
 })
+
+test.afterAll(async () => {
+  await pool?.end()
+})
+
+/** Direct-SQL insert of an Asset row (see file-header comment for why this bypasses Prisma/HTTP). */
+async function insertAsset(opts: { orgId: string; uploadedBy: string; fileUrl: string }): Promise<string> {
+  const id = `e2e-asset-${crypto.randomUUID()}`
+  await pool.query(
+    `INSERT INTO "Asset" (id, "orgId", "uploadedBy", name, type, source, "fileUrl", status, "isFolder", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, 'E2E asset', 'video', 'upload', $4, 'ready', false, now(), now())`,
+    [id, opts.orgId, opts.uploadedBy, opts.fileUrl],
+  )
+  return id
+}
+
+/** Direct-SQL point a CompetitorCreative's assetId at an Asset id. */
+async function setCcAssetId(ccId: string, assetId: string): Promise<void> {
+  await pool.query(`UPDATE "CompetitorCreative" SET "assetId" = $1 WHERE id = $2`, [assetId, ccId])
+}
 
 test.afterAll(async () => {
   await ctx.dispose()
@@ -116,9 +155,9 @@ async function ingestCompetitorCreative(): Promise<string> {
   return row!.id
 }
 
-async function createRemixJob(competitorCreativeId: string) {
+async function createRemixJob(competitorCreativeId: string, extra?: Record<string, unknown>) {
   const res = await ctx.post(p('/api/creatives/remix-jobs'), {
-    data: { competitorCreativeId, ...REMIX_PRODUCT },
+    data: { competitorCreativeId, ...REMIX_PRODUCT, ...extra },
   })
   return res
 }
@@ -491,5 +530,82 @@ test.describe('worker/remix-jobs — upload', () => {
     expect(res.status(), await res.text()).toBe(409)
     const json = await res.json()
     expect(json.error).toBe('stale claim')
+  })
+})
+
+// t1/t2 refs — the worker-side @reference (t1) / clean-segment source (t2)
+// resolved from CompetitorCreative.assetId → Asset.fileUrl at claim time. No
+// hermetic HTTP path creates a stored Asset (the real Tier-2 "Save video" flow
+// fetches over the network), so these insert the Asset row directly via SQL —
+// see the file-header comment above the DATABASE_URL skip gate.
+test.describe('worker/remix-jobs — t1/t2 refs (direct-SQL Asset)', () => {
+  test('t2 claim returns refs pointing at the org-scoped stored Asset', async () => {
+    const competitorCreativeId = await ingestCompetitorCreative()
+    const fileUrl = 'https://storage.googleapis.com/adex-data-gameclaw/uploads/e2e-test-asset.mp4'
+    const assetId = await insertAsset({ orgId, uploadedBy: userId, fileUrl })
+    await setCcAssetId(competitorCreativeId, assetId)
+
+    const createRes = await createRemixJob(competitorCreativeId, {
+      tier: 't2',
+      segmentPlan: [{ start: 0, end: 5, action: 'reuse' }],
+    })
+    expect(createRes.status(), await createRes.text()).toBe(200)
+    const { job } = await createRes.json()
+
+    const claimed = await claimJob(job.id)
+    expect(claimed.claimToken).toBeTruthy()
+    expect(claimed.refs).toEqual([{ url: fileUrl, kind: 'video' }])
+  })
+
+  test("org isolation (regression, bbf02d4): claim never leaks another org's Asset via a foreign assetId", async ({}, testInfo) => {
+    // Org A: create a valid t2 job with a real, org-A-scoped Asset — this has
+    // to pass the create-time "competitor video not stored" check, which is
+    // itself already org-scoped, so the only way to reach the vulnerable
+    // pre-fix state is a *later* mutation of assetId (bad import / re-link).
+    const competitorCreativeId = await ingestCompetitorCreative()
+    const assetA = await insertAsset({
+      orgId,
+      uploadedBy: userId,
+      fileUrl: 'https://storage.googleapis.com/adex-data-gameclaw/uploads/e2e-org-a-asset.mp4',
+    })
+    await setCcAssetId(competitorCreativeId, assetA)
+
+    const createRes = await createRemixJob(competitorCreativeId, {
+      tier: 't2',
+      segmentPlan: [{ start: 0, end: 5, action: 'reuse' }],
+    })
+    expect(createRes.status(), await createRes.text()).toBe(200)
+    const { job } = await createRes.json()
+
+    // Org B: an unrelated second user/org, registered in its own request
+    // context so it never touches the shared `ctx` session cookie.
+    const bCtx = await pwRequest.newContext({ baseURL: testInfo.project.use.baseURL })
+    const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const bRes = await bCtx.post(p('/api/auth/register'), {
+      data: {
+        email: `remix-jobs-e2e-orgb-${unique}@adex-e2e.dev`,
+        password: 'e2e-test-password-1',
+        name: `Remix Jobs E2E OrgB ${unique}`,
+      },
+    })
+    expect(bRes.ok(), await bRes.text()).toBeTruthy()
+    const bUserId = (await bRes.json()).id
+    const bOrgsRes = await bCtx.get(p('/api/orgs'))
+    const bOrgs = await bOrgsRes.json()
+    const orgBId = bOrgs[0].id
+    await bCtx.dispose()
+
+    const assetB = await insertAsset({
+      orgId: orgBId,
+      uploadedBy: bUserId,
+      fileUrl: 'https://storage.googleapis.com/adex-data-gameclaw/uploads/e2e-org-b-asset.mp4',
+    })
+
+    // The bug scenario: CompetitorCreative (org A) ends up pointing at a
+    // *foreign* org's Asset.
+    await setCcAssetId(competitorCreativeId, assetB)
+
+    const claimed = await claimJob(job.id)
+    expect(claimed.refs).toEqual([])
   })
 })
