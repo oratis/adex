@@ -10,6 +10,7 @@
  * Ref: src/app/api/creatives/remix-jobs/route.ts · src/app/api/worker/remix-jobs/**
  * · src/lib/growth/remix-job.ts
  */
+import crypto from 'node:crypto'
 import { test, expect, request as pwRequest, type APIRequestContext } from '@playwright/test'
 import { sign } from './helpers/hmac'
 
@@ -163,6 +164,9 @@ test.describe('worker/remix-jobs — claim atomicity', () => {
     const claim1Json = await claim1.json()
     expect(claim1Json.job).toBeTruthy()
     expect(claim1Json.job.id).toBe(job.id)
+    expect(typeof claim1Json.job.claimToken).toBe('string')
+    expect(claim1Json.job.claimToken.length).toBeGreaterThan(0)
+    expect(claim1Json.job.attempt).toBe(1)
 
     const body2 = JSON.stringify({ jobId: job.id })
     const s2 = sign(WORKER_SECRET, body2)
@@ -208,8 +212,8 @@ async function claimJob(jobId: string) {
   return json.job
 }
 
-function canonicalOutputUrl(jobId: string) {
-  return `https://storage.googleapis.com/adex-data-gameclaw/uploads/remix/${orgId}/${jobId}.mp4`
+function canonicalOutputUrl(jobId: string, attempt: number) {
+  return `https://storage.googleapis.com/adex-data-gameclaw/uploads/remix/${orgId}/${jobId}/v${attempt}.mp4`
 }
 
 /** Create + claim a job, then drive it through running→assembling→qc (all legal). */
@@ -217,12 +221,16 @@ async function createClaimedJobAtQc() {
   const competitorCreativeId = await ingestCompetitorCreative()
   const createRes = await createRemixJob(competitorCreativeId)
   const { job } = await createRes.json()
-  await claimJob(job.id)
+  const claimed = await claimJob(job.id)
   for (const status of ['running', 'assembling', 'qc']) {
-    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status })
+    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
+      jobId: job.id,
+      claimToken: claimed.claimToken,
+      status,
+    })
     expect(res.status(), await res.text()).toBe(200)
   }
-  return job as { id: string }
+  return { id: job.id as string, claimToken: claimed.claimToken as string, attempt: claimed.attempt as number }
 }
 
 test.describe('worker/remix-jobs — report', () => {
@@ -230,11 +238,12 @@ test.describe('worker/remix-jobs — report', () => {
     const competitorCreativeId = await ingestCompetitorCreative()
     const createRes = await createRemixJob(competitorCreativeId)
     const { job } = await createRes.json()
-    await claimJob(job.id)
+    const claimed = await claimJob(job.id)
 
     const beats = [{ index: 0, role: 'hook', status: 'done', seconds: 3 }]
     const reportRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
       jobId: job.id,
+      claimToken: claimed.claimToken,
       status: 'running',
       beats,
     })
@@ -251,11 +260,20 @@ test.describe('worker/remix-jobs — report', () => {
     const job = await createClaimedJobAtQc()
 
     // Missing outputUrl → 400 (checked before the transition, regardless of current status)
-    const missingRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'succeeded' })
+    const missingRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
+      jobId: job.id,
+      claimToken: job.claimToken,
+      status: 'succeeded',
+    })
     expect(missingRes.status()).toBe(400)
 
-    const outputUrl = canonicalOutputUrl(job.id)
-    const okRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'succeeded', outputUrl })
+    const outputUrl = canonicalOutputUrl(job.id, job.attempt)
+    const okRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
+      jobId: job.id,
+      claimToken: job.claimToken,
+      status: 'succeeded',
+      outputUrl,
+    })
     expect(okRes.status(), await okRes.text()).toBe(200)
 
     const getRes = await ctx.get(p(`/api/creatives/remix-jobs?id=${job.id}`))
@@ -267,11 +285,20 @@ test.describe('worker/remix-jobs — report', () => {
 
   test('report after succeeded (terminal) → 409', async () => {
     const job = await createClaimedJobAtQc()
-    const outputUrl = canonicalOutputUrl(job.id)
-    const okRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'succeeded', outputUrl })
+    const outputUrl = canonicalOutputUrl(job.id, job.attempt)
+    const okRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
+      jobId: job.id,
+      claimToken: job.claimToken,
+      status: 'succeeded',
+      outputUrl,
+    })
     expect(okRes.status(), await okRes.text()).toBe(200)
 
-    const afterRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'running' })
+    const afterRes = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
+      jobId: job.id,
+      claimToken: job.claimToken,
+      status: 'running',
+    })
     expect(afterRes.status()).toBe(409)
     const afterJson = await afterRes.json()
     expect(afterJson.currentStatus).toBe('succeeded')
@@ -282,8 +309,13 @@ test.describe('worker/remix-jobs — report', () => {
     const createRes = await createRemixJob(competitorCreativeId)
     const { job } = await createRes.json()
 
-    const outputUrl = canonicalOutputUrl(job.id)
-    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'succeeded', outputUrl })
+    const outputUrl = canonicalOutputUrl(job.id, 0)
+    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
+      jobId: job.id,
+      claimToken: 'irrelevant-token-job-was-never-claimed',
+      status: 'succeeded',
+      outputUrl,
+    })
     expect(res.status()).toBe(409)
     const json = await res.json()
     expect(json.currentStatus).toBe('pending')
@@ -291,17 +323,23 @@ test.describe('worker/remix-jobs — report', () => {
 
   test('succeeded report with a non-canonical outputUrl → 400', async () => {
     const job = await createClaimedJobAtQc()
-    const badUrl = 'https://storage.googleapis.com/adex-data-gameclaw/uploads/remix/some-other-org/some-other-job.mp4'
-    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, { jobId: job.id, status: 'succeeded', outputUrl: badUrl })
+    const badUrl = 'https://storage.googleapis.com/adex-data-gameclaw/uploads/remix/some-other-org/some-other-job/v1.mp4'
+    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
+      jobId: job.id,
+      claimToken: job.claimToken,
+      status: 'succeeded',
+      outputUrl: badUrl,
+    })
     expect(res.status()).toBe(400)
   })
 
   test('succeeded report with qcReport pass:false still promotes the creative, but flags reviewNotes', async () => {
     const job = await createClaimedJobAtQc()
-    const outputUrl = canonicalOutputUrl(job.id)
+    const outputUrl = canonicalOutputUrl(job.id, job.attempt)
     const qcReport = { pass: false, hits: [{ term: 'competitor-name', beat: 0 }] }
     const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
       jobId: job.id,
+      claimToken: job.claimToken,
       status: 'succeeded',
       outputUrl,
       qcReport,
@@ -312,6 +350,22 @@ test.describe('worker/remix-jobs — report', () => {
     const getJson = await getRes.json()
     expect(getJson.job.creative.status).toBe('ready')
     expect(getJson.job.creative.reviewNotes).toContain('QC FAILED')
+  })
+
+  test('report with a wrong claimToken → 409 stale claim', async () => {
+    const competitorCreativeId = await ingestCompetitorCreative()
+    const createRes = await createRemixJob(competitorCreativeId)
+    const { job } = await createRes.json()
+    await claimJob(job.id)
+
+    const res = await workerPost('/api/worker/remix-jobs/report', WORKER_SECRET, {
+      jobId: job.id,
+      claimToken: 'not-the-real-claim-token',
+      status: 'running',
+    })
+    expect(res.status(), await res.text()).toBe(409)
+    const json = await res.json()
+    expect(json.error).toBe('stale claim')
   })
 })
 
@@ -327,10 +381,58 @@ test.describe('worker/remix-jobs — upload', () => {
         'content-type': 'video/mp4',
         'x-adex-timestamp': String(Math.floor(Date.now() / 1000)),
         'x-adex-content-sha256': 'deadbeef',
+        'x-adex-claim-token': 'whatever',
         'x-adex-signature': 'sha256=deadbeef',
       },
       data: fakeVideo,
     })
     expect(res.status()).toBe(401)
+  })
+
+  test('missing x-adex-claim-token → 401', async () => {
+    const competitorCreativeId = await ingestCompetitorCreative()
+    const createRes = await createRemixJob(competitorCreativeId)
+    const { job } = await createRes.json()
+    const claimed = await claimJob(job.id)
+
+    const fakeVideo = Buffer.from('not-really-an-mp4')
+    const contentSha256 = crypto.createHash('sha256').update(fakeVideo).digest('hex')
+    const s = sign(WORKER_SECRET, `${job.id}:${claimed.claimToken}:${contentSha256}`)
+    const res = await ctx.post(p(`/api/worker/remix-jobs/upload?jobId=${job.id}`), {
+      headers: {
+        'content-type': 'video/mp4',
+        'x-adex-timestamp': s.timestamp,
+        'x-adex-content-sha256': contentSha256,
+        'x-adex-signature': s.signature,
+        // x-adex-claim-token intentionally omitted
+      },
+      data: fakeVideo,
+    })
+    expect(res.status()).toBe(401)
+  })
+
+  test('wrong claimToken (signature correctly computed over the wrong token) → 409', async () => {
+    const competitorCreativeId = await ingestCompetitorCreative()
+    const createRes = await createRemixJob(competitorCreativeId)
+    const { job } = await createRes.json()
+    await claimJob(job.id)
+
+    const fakeVideo = Buffer.from('not-really-an-mp4')
+    const contentSha256 = crypto.createHash('sha256').update(fakeVideo).digest('hex')
+    const wrongToken = 'wrong-claim-token'
+    const s = sign(WORKER_SECRET, `${job.id}:${wrongToken}:${contentSha256}`)
+    const res = await ctx.post(p(`/api/worker/remix-jobs/upload?jobId=${job.id}`), {
+      headers: {
+        'content-type': 'video/mp4',
+        'x-adex-timestamp': s.timestamp,
+        'x-adex-content-sha256': contentSha256,
+        'x-adex-claim-token': wrongToken,
+        'x-adex-signature': s.signature,
+      },
+      data: fakeVideo,
+    })
+    expect(res.status(), await res.text()).toBe(409)
+    const json = await res.json()
+    expect(json.error).toBe('stale claim')
   })
 })
