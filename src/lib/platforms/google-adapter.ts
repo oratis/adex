@@ -40,6 +40,14 @@ export class GoogleAdsAdapter extends BaseAdapter {
   readonly platform = 'google' as const
   readonly accountId: string
   private client: GoogleAdsClient
+  // Normalized (dash-stripped) MCC id. Used purely as login-customer-id
+  // context — never iterated as a customer for report queries, because the
+  // MCC is a manager and has no campaigns of its own.
+  private mccId: string
+  // Customer IDs the workspace has explicitly linked (PlatformAccount rows).
+  // Empty array means "auto-discover" — we'll walk customer_client under the
+  // MCC, then fall back to listAccessibleCustomers.
+  private linkedAccountIds: string[]
 
   constructor(input: AdapterFactoryInput) {
     super(input.authId)
@@ -51,12 +59,45 @@ export class GoogleAdsAdapter extends BaseAdapter {
       )
     }
     this.accountId = input.accountId
+    this.mccId = input.accountId.replace(/[-\s]/g, '')
+    this.linkedAccountIds = (input.linkedAccountIds || [])
+      .map(id => id.replace(/[-\s]/g, ''))
+      .filter(id => id && id !== this.mccId)
     this.client = new GoogleAdsClient({
       accessToken: input.accessToken || '',
       refreshToken: input.refreshToken,
       customerId: input.accountId,
       developerToken: input.apiKey,
     })
+  }
+
+  /**
+   * Pick the customer IDs to actually pull reports from.
+   *
+   * Order of preference:
+   * 1. Explicitly linked PlatformAccount rows (minus the MCC itself).
+   * 2. customer_client tree under the MCC (auto-discover, skip managers/hidden).
+   * 3. listAccessibleCustomers (legacy fallback — only the OAuth user's
+   *    directly-linked accounts).
+   *
+   * We always filter out manager accounts (no campaigns) and skip the MCC
+   * even if a caller accidentally passes it in.
+   */
+  private async resolveCustomerIds(): Promise<string[]> {
+    if (this.linkedAccountIds.length > 0) {
+      return this.linkedAccountIds
+    }
+    try {
+      const clients = await this.client.listMccClients(this.mccId)
+      const leaves = clients
+        .filter(c => !c.isManager && !c.hidden && c.status === 'ENABLED' && c.id && c.id !== this.mccId)
+        .map(c => c.id)
+      if (leaves.length > 0) return leaves
+    } catch {
+      // fall through to listAccessibleCustomers
+    }
+    const accessible = await this.client.listAccessibleCustomers()
+    return accessible.filter(id => id !== this.mccId)
   }
 
   async refreshAuth() {
@@ -219,7 +260,7 @@ export class GoogleAdsAdapter extends BaseAdapter {
 
   async fetchCampaignList(): Promise<PlatformCampaignSnapshot[]> {
     await this.refreshAuth()
-    const customerIds = await safeCall(this.platform, () => this.client.listAccessibleCustomers())
+    const customerIds = await safeCall(this.platform, () => this.resolveCustomerIds())
     const out: PlatformCampaignSnapshot[] = []
     for (const cid of customerIds) {
       try {
@@ -250,7 +291,7 @@ export class GoogleAdsAdapter extends BaseAdapter {
 
   async fetchAccountReport(range: DateRange): Promise<AccountReport> {
     await this.refreshAuth()
-    const customerIds = await safeCall(this.platform, () => this.client.listAccessibleCustomers())
+    const customerIds = await safeCall(this.platform, () => this.resolveCustomerIds())
     const acc: AccountReport = {
       impressions: 0,
       clicks: 0,
@@ -281,7 +322,7 @@ export class GoogleAdsAdapter extends BaseAdapter {
 
   async fetchCampaignReport(range: DateRange): Promise<CampaignReport[]> {
     await this.refreshAuth()
-    const customerIds = await safeCall(this.platform, () => this.client.listAccessibleCustomers())
+    const customerIds = await safeCall(this.platform, () => this.resolveCustomerIds())
     const out: CampaignReport[] = []
     for (const cid of customerIds) {
       try {

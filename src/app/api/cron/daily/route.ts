@@ -53,7 +53,15 @@ async function syncOne(
 ): Promise<SyncMetrics | { error: string }> {
   try {
     if (isAdaptablePlatform(platform)) {
-      const adapter = getAdapter(platform, auth)
+      // Mirror /api/reports/sync: feed the adapter the workspace's linked
+      // PlatformAccount IDs so Google MCC iterates only the customer IDs
+      // the user explicitly linked (and skips the MCC itself as a leaf).
+      const linkedAccounts = await prisma.platformAccount.findMany({
+        where: { orgId: auth.orgId, platform, isActive: true },
+        select: { accountId: true },
+      })
+      const linkedAccountIds = linkedAccounts.map(a => a.accountId).filter(Boolean)
+      const adapter = getAdapter(platform, auth, linkedAccountIds)
       const out = await runAdapterSync(adapter, {
         orgId: auth.orgId,
         userId: auth.userId,

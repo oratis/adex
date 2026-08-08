@@ -63,7 +63,12 @@ export async function POST(req: NextRequest) {
   for (const auth of auths) {
     if (!isAdaptablePlatform(auth.platform)) continue
     try {
-      const adapter = getAdapter(auth.platform, auth)
+      const linkedAccounts = await prisma.platformAccount.findMany({
+        where: { orgId: org.id, platform: auth.platform, isActive: true },
+        select: { accountId: true },
+      })
+      const linkedAccountIds = linkedAccounts.map(a => a.accountId).filter(Boolean)
+      const adapter = getAdapter(auth.platform, auth, linkedAccountIds)
       const snap = await captureCampaignSnapshots({ adapter, orgId: org.id })
       snapshots += snap.snapshotsTaken
       orphans += snap.orphans

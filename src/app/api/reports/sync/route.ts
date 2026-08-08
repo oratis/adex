@@ -104,7 +104,16 @@ async function syncViaAdapter(
   endDate: string,
   today: Date
 ) {
-  const adapter = getAdapter(auth.platform, auth)
+  // Workspace may have N PlatformAccount rows under one PlatformAuth (Google
+  // MCC owning multiple customer IDs is the canonical case). Pass them to
+  // the adapter so it iterates exactly those accounts and uses auth.accountId
+  // purely as login-customer-id context.
+  const linkedAccounts = await prisma.platformAccount.findMany({
+    where: { orgId, platform: auth.platform, isActive: true },
+    select: { accountId: true },
+  })
+  const linkedAccountIds = linkedAccounts.map(a => a.accountId).filter(Boolean)
+  const adapter = getAdapter(auth.platform, auth, linkedAccountIds)
   const out = await runAdapterSync(adapter, { orgId, userId, startDate, endDate, today })
   return { success: true, ...out.account, campaignsWritten: out.campaignsWritten }
 }

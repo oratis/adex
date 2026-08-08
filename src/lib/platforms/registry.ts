@@ -12,7 +12,7 @@ export function isAdaptablePlatform(p: string): p is PlatformName {
   return (ADAPTABLE_PLATFORMS as string[]).includes(p)
 }
 
-function authToInput(auth: PlatformAuth): AdapterFactoryInput {
+function authToInput(auth: PlatformAuth, linkedAccountIds?: string[]): AdapterFactoryInput {
   return {
     accessToken: auth.accessToken,
     refreshToken: auth.refreshToken,
@@ -21,6 +21,7 @@ function authToInput(auth: PlatformAuth): AdapterFactoryInput {
     appSecret: auth.appSecret,
     apiKey: auth.apiKey,
     authId: auth.id,
+    linkedAccountIds,
   }
 }
 
@@ -28,9 +29,18 @@ function authToInput(auth: PlatformAuth): AdapterFactoryInput {
  * Build a PlatformAdapter for a given platform/auth pair. Throws if the
  * platform is not yet adaptable (e.g. Amazon/LinkedIn still on legacy
  * client-only flow).
+ *
+ * `linkedAccountIds` is optional — pass the workspace's PlatformAccount
+ * accountIds when calling from the sync path so the adapter knows which
+ * sub-accounts to iterate (Google MCC, TikTok BC, ...). Single-account
+ * call sites (campaign launch, agent tools) can omit it.
  */
-export function getAdapter(platform: string, auth: PlatformAuth): PlatformAdapter {
-  const input = authToInput(auth)
+export function getAdapter(
+  platform: string,
+  auth: PlatformAuth,
+  linkedAccountIds?: string[]
+): PlatformAdapter {
+  const input = authToInput(auth, linkedAccountIds)
   switch (platform) {
     case 'google':
       return new GoogleAdsAdapter(input)
