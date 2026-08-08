@@ -14,7 +14,7 @@
  * Ref: docs/growth/06-competitor-intel-remix.md §4–5 · .claude/rules/testing.md
  */
 import { test, expect } from '@playwright/test'
-import crypto from 'node:crypto'
+import { sign } from './helpers/hmac'
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || ''
 const p = (path: string) => `${BASE_PATH}${path.startsWith('/') ? path : '/' + path}`
@@ -71,12 +71,6 @@ const SAMPLE_BATCH = {
       aiPromptStructure: 'subject{name,description}+composition{angle}+next_scene',
     },
   ],
-}
-
-function sign(secret: string, body: string) {
-  const timestamp = String(Math.floor(Date.now() / 1000))
-  const signature = `sha256=${crypto.createHmac('sha256', secret).update(`${timestamp}:${body}`).digest('hex')}`
-  return { timestamp, signature }
 }
 
 test.describe('competitor ingest — auth gate', () => {

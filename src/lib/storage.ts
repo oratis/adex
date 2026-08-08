@@ -104,4 +104,13 @@ export async function isGCSAvailable(): Promise<boolean> {
   }
 }
 
-export { GCS_BUCKET, GCS_UPLOAD_PREFIX }
+/**
+ * Public URL prefix for objects in the configured bucket, e.g.
+ * `https://storage.googleapis.com/adex-data-gameclaw/` — every object's
+ * public URL is this prefix + its object path.
+ */
+function gcsPublicPrefix(): string {
+  return `https://storage.googleapis.com/${GCS_BUCKET}/`
+}
+
+export { GCS_BUCKET, GCS_UPLOAD_PREFIX, gcsPublicPrefix }

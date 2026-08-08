@@ -22,6 +22,11 @@ export type AuditAction =
   | 'creative.attach'
   // Competitor intel (Tier-2 full-video storage — IP-sensitive, logged for provenance)
   | 'competitor.video_store'
+  // RemixJob (worker-engine competitor-remix path — src/app/api/worker/remix-jobs/**)
+  | 'remix.job_create'
+  | 'remix.job_claim'
+  | 'remix.job_report'
+  | 'remix.job_upload'
   // Budgets
   | 'budget.create'
   | 'budget.update'
