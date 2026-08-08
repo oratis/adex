@@ -1076,3 +1076,35 @@ model CompetitorCreative {
   @@index([orgId, appName])
   @@index([orgId, relevance])
 }
+
+model RemixJob {
+  id                   String   @id @default(cuid())
+  orgId                String
+  userId               String
+  competitorCreativeId String?
+  creativeId           String?   // 本 job 产出的 review-gated Creative
+  tier                 String    @default("t0_5") // t0_5 (本期) | 预留 t0/t1/t2/mixed
+  status               String    @default("pending") // pending|claimed|running|assembling|qc|succeeded|failed
+  brief                Json      // RemixBrief 快照（含 storyboard beats）
+  segmentPlan          Json?     // 预留后续分段路由
+  beats                Json?     // worker 上报的逐段进度 [{index,role,status,taskId?,videoUrl?,seconds?}]
+  outputUrl            String?   // 最终成片 GCS URL
+  qcReport             Json?     // 品牌复扫报告
+  costTokens           Int?
+  error                String?
+  // Claim fencing: the current holder's token, reissued on every claim. upload/report
+  // both verify it, so a worker that lost its lease (preempted by a stale-lease reclaim)
+  // physically cannot overwrite the new holder's output — see claim/route.ts header comment.
+  claimToken           String?
+  // Claim count — bumps on every claim, used to version the output object key
+  // (remix/${orgId}/${jobId}/v${attempt}.mp4) so preempted/retried attempts never collide.
+  attempt              Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([orgId, status])
+  @@index([orgId, createdAt])
+  // Claim hot path: filter by status, order by updatedAt (stale-lease lookup) —
+  // [orgId, status] above doesn't cover this since claim is org-independent.
+  @@index([status, updatedAt])
+}

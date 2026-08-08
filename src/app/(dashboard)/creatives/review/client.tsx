@@ -19,6 +19,9 @@ type Creative = {
   reviewedAt: string | null
   reviewNotes: string | null
   createdAt: string
+  tier: string | null
+  containsCompetitorFootage: boolean
+  competitorReferenced: boolean
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -104,6 +107,11 @@ export function ReviewClient({
           <Card key={c.id}>
             <CardContent className="p-4 space-y-2">
               <div className="flex items-center gap-2 flex-wrap">
+                {c.containsCompetitorFootage ? (
+                  <Badge className="bg-rose-600 text-white">⚠ competitor footage · t2</Badge>
+                ) : c.competitorReferenced ? (
+                  <Badge className="bg-amber-500 text-white">competitor-referenced · t1</Badge>
+                ) : null}
                 <Badge className={STATUS_COLORS[c.reviewStatus] || ''}>{c.reviewStatus}</Badge>
                 <Badge>{c.type}</Badge>
                 <Badge className="bg-gray-100 text-gray-700">{c.source}</Badge>
