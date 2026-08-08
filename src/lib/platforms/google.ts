@@ -112,12 +112,76 @@ export class GoogleAdsClient {
   }
 
   /**
-   * Get customer client accounts under MCC
+   * List every customer_client under the configured MCC (login-customer-id).
+   * Returns the full tree (the MCC itself + every sub-account it manages),
+   * which is what the Google Ads UI shows when you click the account picker.
+   *
+   * Pure listAccessibleCustomers only returns accounts the OAuth user is
+   * *directly* linked to — it does NOT enumerate accounts owned through the
+   * MCC. So an MCC like 830-379-6268 will surface itself but hide its sub
+   * accounts (348-133-3068, 993-913-5964, ...). Querying customer_client
+   * against the MCC closes that gap.
+   */
+  async listMccClients(
+    mccId?: string
+  ): Promise<Array<{ id: string; name: string; isManager: boolean; hidden: boolean; status: string; level: number }>> {
+    const cid = (mccId || this.config.customerId || '').replace(/[-\s]/g, '')
+    if (!cid) throw new Error('listMccClients requires an MCC customer id')
+    const result = await this.search(
+      cid,
+      `SELECT customer_client.client_customer,
+              customer_client.id,
+              customer_client.descriptive_name,
+              customer_client.manager,
+              customer_client.hidden,
+              customer_client.level,
+              customer_client.status
+       FROM customer_client
+       WHERE customer_client.status != 'CLOSED'`
+    )
+    const rows = (result.results || []) as Array<Record<string, Record<string, unknown>>>
+    return rows.map(r => {
+      const cc = r.customer_client || r.customerClient || {}
+      return {
+        id: String(cc.id || ''),
+        name: String(cc.descriptiveName || cc.descriptive_name || 'Unnamed'),
+        isManager: Boolean(cc.manager),
+        hidden: Boolean(cc.hidden),
+        status: String(cc.status || 'UNKNOWN'),
+        level: Number(cc.level || 0),
+      }
+    }).filter(r => r.id)
+  }
+
+  /**
+   * Get customer client accounts under MCC.
+   *
+   * Strategy:
+   * 1. If the configured customerId is an MCC, walk its customer_client tree
+   *    so sub-accounts surface even when they aren't directly OAuth-linked
+   *    to the calling user.
+   * 2. Otherwise (or if the MCC query fails — e.g. wrong login-customer-id,
+   *    no manager privilege), fall back to listAccessibleCustomers + a per
+   *    account `customer` describe.
    */
   async getClientAccounts(): Promise<Array<{ id: string; name: string; isManager: boolean }>> {
+    const mccId = (this.config.customerId || '').replace(/[-\s]/g, '')
+
+    if (mccId) {
+      try {
+        const clients = await this.listMccClients(mccId)
+        if (clients.length > 0) {
+          return clients
+            .filter(c => !c.hidden)
+            .map(c => ({ id: c.id, name: c.name, isManager: c.isManager }))
+        }
+      } catch {
+        // fall through to legacy listAccessibleCustomers
+      }
+    }
+
     const customerIds = await this.listAccessibleCustomers()
     const accounts: Array<{ id: string; name: string; isManager: boolean }> = []
-
     for (const cid of customerIds) {
       try {
         const result = await this.search(cid, 'SELECT customer.id, customer.descriptive_name, customer.manager FROM customer LIMIT 1')

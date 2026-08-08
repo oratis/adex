@@ -178,4 +178,12 @@ export type AdapterFactoryInput = {
   apiKey: string | null
   // PlatformAuth.id — adapters use this to persist refreshed tokens
   authId: string
+  // Optional: list of additional ad-account IDs scoped under the same auth.
+  // For Google Ads MCC this is the set of customer_client IDs the workspace
+  // has explicitly linked (PlatformAccount rows). When present, sync should
+  // iterate these instead of auto-discovering, and treat `accountId` (the
+  // MCC) purely as the login-customer-id context — not as a customer to pull
+  // reports from. Other multi-account platforms (TikTok, Meta business
+  // manager) can opt into the same convention later.
+  linkedAccountIds?: string[]
 }
