@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
+import { logAudit } from '@/lib/audit'
 
 export async function GET() {
   try {
@@ -14,8 +15,8 @@ export async function GET() {
       platform: a.platform,
       accountId: a.accountId,
       appId: a.appId,
-      apiKey: a.apiKey,
-      extra: a.extra,
+      hasApiKey: !!a.apiKey,
+      extra: a.platform === 'adjust' ? null : a.extra,
       isActive: a.isActive,
       hasRefreshToken: !!a.refreshToken,
       hasAccessToken: !!a.accessToken,
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest) {
     const { user, org } = await requireAuthWithOrg()
     const data = await req.json()
     const platform = data.platform as string
+    if (platform === 'adjust') return NextResponse.json({ error: 'Use Adjust setup to manage this connection' }, { status: 400 })
 
     // Check if record exists (scoped to org)
     const existing = await prisma.platformAuth.findUnique({
@@ -95,7 +97,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       id: auth.id, platform: auth.platform, isActive: auth.isActive,
-      accountId: auth.accountId, apiKey: auth.apiKey, appId: auth.appId,
+      accountId: auth.accountId, hasApiKey: !!auth.apiKey, appId: auth.appId,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to save authorization'
@@ -105,12 +107,16 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { org } = await requireAuthWithOrg()
-    const { platform } = await req.json()
+    const { org, user, role } = await requireAuthWithOrg()
+    const body = await req.json()
+    const platform = typeof body?.platform === 'string' ? body.platform.trim() : ''
+    if (!platform) return NextResponse.json({ error: 'platform is required' }, { status: 400 })
+    if (platform === 'adjust' && !['owner', 'admin'].includes(role)) return NextResponse.json({ error: 'Workspace admin access required' }, { status: 403 })
     await prisma.$transaction([
       prisma.platformAccount.deleteMany({ where: { orgId: org.id, platform } }),
       prisma.platformAuth.deleteMany({ where: { orgId: org.id, platform } }),
     ])
+    await logAudit({ orgId: org.id, userId: user.id, action: 'platform.disconnect', targetType: 'platform', targetId: platform, req })
     return NextResponse.json({ ok: true })
   } catch {
     return NextResponse.json({ error: 'Failed to delete' }, { status: 500 })

@@ -36,6 +36,10 @@ jobs:
       INGEST_WEBHOOK_SECRET: e2e-competitor-ingest-secret
       WORKER_WEBHOOK_SECRET: e2e-worker-secret
       INVITE_CODES_DISABLED: 'true'
+      REPORT_DB_TESTS: '1'
+      ADJUST_TEST_API_URL: http://127.0.0.1:3322
+      # Fixture-only encryption key. Never deploy this value.
+      PLATFORM_CREDENTIAL_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 
     steps:
       - uses: actions/checkout@v4
@@ -66,9 +70,11 @@ jobs:
         run: npm run test:e2e
 
       - name: Upload Playwright report
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 7

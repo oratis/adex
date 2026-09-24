@@ -5,6 +5,8 @@ import { sendMail } from '@/lib/mailer'
 import { completeText, isLLMConfigured } from '@/lib/llm'
 import { AppsFlyerClient } from '@/lib/platforms/appsflyer'
 import { AdjustClient } from '@/lib/platforms/adjust'
+import { openCredential } from '@/lib/platform-credential'
+import { syncConfiguredAdjust } from '@/lib/reports/adjust-service'
 import { getAdapter, isAdaptablePlatform } from '@/lib/platforms/registry'
 import { runAdapterSync } from '@/lib/sync/report-writer'
 import { refreshBudgetSpent } from '@/lib/budget/refresh'
@@ -94,7 +96,7 @@ async function syncOne(
       return metrics
     }
     if (platform === 'adjust' && auth.apiKey && auth.appId) {
-      const client = new AdjustClient({ apiToken: auth.apiKey, appToken: auth.appId })
+      const client = new AdjustClient({ apiToken: openCredential(auth.apiKey, `${auth.orgId}:adjust`), appToken: auth.appId })
       const data = await client.getReport(startDate, endDate)
       const rows: Array<Record<string, unknown>> = Array.isArray(data.rows) ? data.rows : []
       const metrics = empty()
@@ -155,6 +157,14 @@ export async function POST(req: NextRequest) {
     //    platforms write account+campaign rows themselves (via runAdapterSync);
     //    legacy MMP platforms still use the inline upsert below.
     for (const auth of org.platformAuths) {
+      if (auth.platform === 'adjust') {
+        // App snapshots are not media spend or legacy account snapshots.
+        const configured = await prisma.platformAccount.count({ where: { orgId: org.id, platform: 'adjust', isActive: true, extra: { not: null } } })
+        if (configured) {
+          syncResults.adjust = { apps: await syncConfiguredAdjust(org.id, startDate, endDate, true) }
+          continue
+        }
+      }
       const metrics = await syncOne(auth.platform, auth, startDate, endDate, today)
       if ('error' in metrics) {
         syncResults[auth.platform] = { error: metrics.error }

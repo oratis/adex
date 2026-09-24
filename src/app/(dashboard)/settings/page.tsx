@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -20,7 +21,7 @@ interface PlatformAuth {
   platform: string
   accountId: string | null
   appId: string | null
-  apiKey: string | null
+  hasApiKey: boolean
   isActive: boolean
   extra: string | null
   hasRefreshToken?: boolean
@@ -177,7 +178,6 @@ export default function SettingsPage() {
       newFormData[auth.platform] = {}
       if (auth.accountId) newFormData[auth.platform].accountId = auth.accountId
       if (auth.appId) newFormData[auth.platform].appId = auth.appId
-      if (auth.apiKey) newFormData[auth.platform].apiKey = auth.apiKey
     }
     setFormData(prev => {
       // Merge: keep any user-edited values, fill in saved values for empty fields
@@ -488,6 +488,24 @@ export default function SettingsPage() {
             <div className="space-y-4">
               {PLATFORMS.map((p) => {
                 const auth = auths.find(a => a.platform === p.id)
+                if (p.id === 'adjust') return (
+                  <Card key={p.id}>
+                    <CardHeader><CardTitle>Adjust</CardTitle></CardHeader>
+                    <CardContent>
+                      <Link href="/settings/adjust" className="text-sm underline">
+                        应用、事件映射与归因报表
+                      </Link>
+                      <p className="mt-2 text-xs text-gray-500">
+                        {auth?.isActive ? 'Connected' : 'Not connected'}
+                      </p>
+                      {auth?.isActive && (
+                        <Button variant="ghost" size="sm" onClick={() => removePlatform('adjust')}>
+                          Disconnect
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                )
                 return (
                   <Card key={p.id}>
                     <CardHeader>
@@ -545,7 +563,7 @@ export default function SettingsPage() {
                             </label>
                             <Input
                               type={f.sensitive ? 'password' : 'text'}
-                              placeholder={f.placeholder}
+                              placeholder={f.key === 'apiKey' && auth?.hasApiKey ? 'Configured (leave blank to keep)' : f.placeholder}
                               value={getFieldValue(p.id, f.key)}
                               onChange={(e) => setFieldValue(p.id, f.key, e.target.value)}
                             />

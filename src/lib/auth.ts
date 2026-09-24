@@ -2,23 +2,11 @@ import { cookies } from 'next/headers'
 import { prisma } from './prisma'
 import crypto from 'crypto'
 import bcrypt from 'bcrypt'
+import { signSessionToken, verifySessionToken } from './auth-token'
+export { signSessionToken, verifySessionToken } from './auth-token'
 
 // bcrypt cost factor — 12 is a reasonable default for web apps in 2026
 const BCRYPT_ROUNDS = 12
-
-const TOKEN_SECRET =
-  process.env.AUTH_TOKEN_SECRET ||
-  process.env.NEXTAUTH_SECRET ||
-  ''
-
-function getSecret(): string {
-  if (!TOKEN_SECRET) {
-    throw new Error(
-      'AUTH_TOKEN_SECRET (or NEXTAUTH_SECRET) is not set. Refusing to sign/verify tokens with an empty secret.'
-    )
-  }
-  return TOKEN_SECRET
-}
 
 /**
  * Hash a password with bcrypt. Sync signature for backward compatibility
@@ -82,44 +70,6 @@ export function generateToken(): string {
   return crypto.randomBytes(32).toString('hex')
 }
 
-// HMAC-signed session token: base64url(payload).base64url(sig)
-// payload includes a session id (sid) so we can revoke individual
-// sessions server-side. Older tokens without sid (pre-v28) are still
-// accepted (stateless) to avoid logging everyone out on deploy.
-type SessionPayload = { uid: string; sid?: string; iat: number; exp: number }
-
-function b64urlEncode(buf: Buffer): string {
-  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-function b64urlDecode(str: string): Buffer {
-  const pad = str.length % 4 === 0 ? '' : '='.repeat(4 - (str.length % 4))
-  return Buffer.from(str.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64')
-}
-
-function sign(data: string): string {
-  return b64urlEncode(
-    crypto.createHmac('sha256', getSecret()).update(data).digest()
-  )
-}
-
-export function signSessionToken(
-  userId: string,
-  sessionId?: string,
-  ttlSeconds = 60 * 60 * 24 * 30
-): string {
-  const now = Math.floor(Date.now() / 1000)
-  const payload: SessionPayload = {
-    uid: userId,
-    ...(sessionId ? { sid: sessionId } : {}),
-    iat: now,
-    exp: now + ttlSeconds,
-  }
-  const payloadStr = b64urlEncode(Buffer.from(JSON.stringify(payload)))
-  const sig = sign(payloadStr)
-  return `${payloadStr}.${sig}`
-}
-
 /**
  * Create a Session row and return a signed token referencing it. This
  * is the canonical login flow — every new cookie should come from here
@@ -149,26 +99,6 @@ export async function createSession(opts: {
     data: { tokenHash },
   })
   return token
-}
-
-export function verifySessionToken(token: string): SessionPayload | null {
-  try {
-    const parts = token.split('.')
-    if (parts.length !== 2) return null
-    const [payloadStr, sig] = parts
-    const expected = sign(payloadStr)
-    // constant-time compare
-    const a = Buffer.from(sig)
-    const b = Buffer.from(expected)
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null
-
-    const payload = JSON.parse(b64urlDecode(payloadStr).toString('utf8')) as SessionPayload
-    if (!payload.uid || !payload.exp) return null
-    if (payload.exp * 1000 < Date.now()) return null
-    return payload
-  } catch {
-    return null
-  }
 }
 
 export async function getCurrentUser() {
@@ -201,13 +131,6 @@ export async function getCurrentUser() {
       }
     }
     return prisma.user.findUnique({ where: { id: payload.uid } })
-  }
-
-  // Legacy path: pre-signed-token cookies stored raw user ID.
-  // Accept only if it matches an existing user — migrated out on next login.
-  if (/^[a-z0-9]{20,}$/i.test(token)) {
-    const user = await prisma.user.findUnique({ where: { id: token } })
-    return user
   }
 
   return null

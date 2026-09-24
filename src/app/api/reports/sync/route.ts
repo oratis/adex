@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { requireAuthWithOrg } from '@/lib/auth'
 import { AppsFlyerClient } from '@/lib/platforms/appsflyer'
 import { AdjustClient } from '@/lib/platforms/adjust'
+import { openCredential } from '@/lib/platform-credential'
+import { syncConfiguredAdjust } from '@/lib/reports/adjust-service'
 import { AmazonAdsClient } from '@/lib/platforms/amazon'
 import { LinkedInAdsClient } from '@/lib/platforms/linkedin'
 import type { PlatformAuth } from '@/generated/prisma/client'
@@ -177,7 +179,7 @@ async function syncAdjust(
   }
 
   const client = new AdjustClient({
-    apiToken: auth.apiKey,
+    apiToken: openCredential(auth.apiKey, `${orgId}:adjust`),
     appToken: auth.appId,
   })
 
@@ -279,11 +281,12 @@ async function syncLinkedIn(
 // ---------------- Main handler ----------------
 
 export async function POST() {
-  let user, org
+  let user, org, role
   try {
     const ctx = await requireAuthWithOrg()
     user = ctx.user
     org = ctx.org
+    role = ctx.role
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -325,7 +328,14 @@ export async function POST() {
             results.appsflyer = await syncAppsFlyer(auth, org.id, user.id, startDate, endDate, today)
             break
           case 'adjust':
-            results.adjust = await syncAdjust(auth, org.id, user.id, startDate, endDate, today)
+            {
+              if (!['owner', 'admin'].includes(role)) {
+                results.adjust = { error: 'Workspace admin access required' }
+                break
+              }
+              const configured = await syncConfiguredAdjust(org.id, startDate, endDate)
+              results.adjust = configured.length ? { apps: configured } : await syncAdjust(auth, org.id, user.id, startDate, endDate, today)
+            }
             break
           case 'amazon':
             results.amazon = await syncAmazon(auth, org.id, user.id, startDate, endDate, today)
